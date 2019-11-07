@@ -8,15 +8,19 @@ import json
 import os
 import random
 import re
-
+import sys
 import enum
 
 import bert_modeling as modeling
 import bert_optimization as optimization
 import bert_tokenization as tokenization
-
+import absl
 import numpy as np
 import tensorflow as tf
+
+from util import get_BJ_time
+
+current_time = get_BJ_time()
 
 
 def del_all_flags(FLAGS):
@@ -26,20 +30,21 @@ def del_all_flags(FLAGS):
         FLAGS.__delattr__(keys)
 
 
-del_all_flags(tf.compat.v1.app.flags.FLAGS)
+del_all_flags(absl.flags.FLAGS)
 
-flags = tf.compat.v1.app.flags
+# If you want to keep using the flags you will have to use the "absl" lib (this is recommended by the TF team)
+flags = absl.flags
 
 flags.DEFINE_string(
-    "bert_config_file", "/kaggle/input/bertjointbaseline/bert_config.json",
+    "bert_config_file", "../input/bertjointbaseline/bert_config.json",
     "The config json file corresponding to the pre-trained BERT model. "
     "This specifies the model architecture.")
 
-flags.DEFINE_string("vocab_file", "/kaggle/input/bertjointbaseline/vocab-nq.txt",
+flags.DEFINE_string("vocab_file", "../input/bertjointbaseline/vocab-nq.txt",
                     "The vocabulary file that the BERT model was trained on.")
 
 flags.DEFINE_string(
-    "output_dir", "outdir",
+    "output_dir", os.path.join("../output/BJB", current_time),
     "The output directory where the model checkpoints will be written.")
 
 flags.DEFINE_string("train_precomputed_file", None,
@@ -49,16 +54,16 @@ flags.DEFINE_integer("train_num_precomputed", None,
                      "Number of precomputed tf records for training.")
 
 flags.DEFINE_string(
-    "predict_file", "/kaggle/input/tensorflow2-question-answering/simplified-nq-test.jsonl/simplified-nq-test.jsonl",
+    "predict_file", "../input/tensorflow2-question-answering/simplified-nq-test.jsonl",
     "NQ json for predictions. E.g., dev-v1.1.jsonl.gz or test-v1.1.jsonl.gz")
 
 flags.DEFINE_string(
-    "output_prediction_file", "predictions.json",
+    "output_prediction_file", os.path.join("../output/BJB", current_time, "predictions.json"),
     "Where to print predictions in NQ prediction format, to be passed to"
     "natural_questions.nq_eval.")
 
 flags.DEFINE_string(
-    "init_checkpoint", "/kaggle/input/bertjointbaseline/bert_joint.ckpt",
+    "init_checkpoint", "../input/bertjointbaseline/bert_joint.ckpt",
     "Initial checkpoint (usually from a pre-trained BERT model).")
 
 flags.DEFINE_bool(
@@ -125,30 +130,7 @@ flags.DEFINE_float(
     "If positive, probability of including answers of type `UNKNOWN`.")
 
 flags.DEFINE_bool("use_tpu", False, "Whether to use TPU or GPU/CPU.")
-
-tf.compat.v1.flags.DEFINE_string(
-    "tpu_name", None,
-    "The Cloud TPU to use for training. This should be either the name "
-    "used when creating the Cloud TPU, or a grpc://ip.address.of.tpu:8470 "
-    "url.")
-
-tf.compat.v1.flags.DEFINE_string(
-    "tpu_zone", None,
-    "[Optional] GCE zone where the Cloud TPU is located in. If not "
-    "specified, we will attempt to automatically detect the GCE project from "
-    "metadata.")
-
-tf.compat.v1.flags.DEFINE_string(
-    "gcp_project", None,
-    "[Optional] Project name for the Cloud TPU-enabled project. If not "
-    "specified, we will attempt to automatically detect the GCE project from "
-    "metadata.")
-
-tf.compat.v1.flags.DEFINE_string("master", None, "[Optional] TensorFlow master URL.")
-
-flags.DEFINE_integer(
-    "num_tpu_cores", 8,
-    "Only used if `use_tpu` is True. Total number of TPU cores to use.")
+flags.DEFINE_bool("use_one_hot_embeddings", False, "Whether to use use_one_hot_embeddings")
 
 flags.DEFINE_bool(
     "verbose_logging", False,
@@ -178,6 +160,7 @@ flags.DEFINE_boolean("undefok", True, "it's okay to be undefined")
 flags.DEFINE_string('f', '', 'kernel')
 
 FLAGS = flags.FLAGS
+FLAGS(sys.argv)  # Parse the flags
 
 TextSpan = collections.namedtuple("TextSpan", "token_positions text")
 
@@ -354,7 +337,11 @@ def candidates_iter(e):
 
 
 def create_example_from_jsonl(line):
-    """Creates an NQ example from a given line of JSON."""
+    """
+    Creates an NQ example from a given line of JSON.
+    :param line: str
+    :return: dict
+    """
     e = json.loads(line, object_pairs_hook=collections.OrderedDict)
     document_tokens = e["document_text"].split(" ")
     e["document_tokens"] = []
@@ -492,7 +479,12 @@ def make_nq_answer(contexts, answer):
 
 
 def read_nq_entry(entry, is_training):
-    """Converts a NQ entry into a list of NqExamples."""
+    """
+    Converts a NQ entry into a list of NqExamples.
+    :param entry: dict
+    :param is_training: bool
+    :return: list[NqExample]
+    """
 
     def is_whitespace(c):
         return c in " \t\r\n" or ord(c) == 0x202F
@@ -876,7 +868,13 @@ class InputFeatures(object):
 
 
 def read_nq_examples(input_file, is_training):
-    """Read a NQ json file into a list of NqExample."""
+    """
+    Read a NQ json file into a list of NqExample.
+    :param input_file: str
+            Input file path.
+    :param is_training: bool
+    :return: list[NqExample]
+    """
     input_paths = tf.io.gfile.glob(input_file)
     input_data = []
 
@@ -1040,16 +1038,14 @@ def model_fn_builder(bert_config, init_checkpoint, learning_rate,
 
             total_loss = (start_loss + end_loss + answer_type_loss) / 3.0
 
-            train_op = optimization.create_optimizer(total_loss, learning_rate,
-                                                     num_train_steps,
-                                                     num_warmup_steps, use_tpu)
+            train_op = optimization.create_optimizer(learning_rate, num_train_steps,
+                                                     num_warmup_steps)
 
             output_spec = tf.estimator.EstimatorSpec(
                 mode=mode,
                 loss=total_loss,
                 train_op=train_op,
                 scaffold=scaffold_fn)
-
         elif mode == tf.estimator.ModeKeys.PREDICT:
             predictions = {
                 "unique_ids": unique_ids,
@@ -1119,6 +1115,8 @@ def input_fn_builder(input_file, seq_length, is_training, drop_remainder):
     return input_fn
 
 
+# namedtuple is used to create tuple-like objects that have fields accessible
+# by attribute lookup as well as being indexable and iterable.
 RawResult = collections.namedtuple(
     "RawResult",
     ["unique_id", "start_logits", "end_logits", "answer_type_logits"])
@@ -1188,7 +1186,12 @@ class ScoreSummary(object):
 
 
 def read_candidates_from_one_split(input_path):
-    """Read candidates from a single jsonl file."""
+    """
+    Read candidates from a single jsonl file.
+    :param input_path: str
+    :return: dict{str:list}
+            example_id with its long_answer_candidates list.
+    """
     candidates_dict = {}
     if input_path.endswith(".gz"):
         with gzip.GzipFile(fileobj=tf.io.gfile.GFile(input_path, "rb")) as input_file:
@@ -1211,7 +1214,13 @@ def read_candidates_from_one_split(input_path):
 
 
 def read_candidates(input_pattern):
-    """Read candidates with real multiple processes."""
+    """
+    Read candidates with real multiple processes.
+    :param input_pattern: str
+            File path.
+    :return: dict{str:list}
+            example_id with its long_answer_candidates list.
+    """
     input_paths = tf.io.gfile.glob(input_pattern)
     final_dict = {}
     for input_path in input_paths:
@@ -1219,8 +1228,15 @@ def read_candidates(input_pattern):
     return final_dict
 
 
+# todo: check logits shape
 def get_best_indexes(logits, n_best_size):
-    """Get the n-best logits from a list."""
+    """
+    Get the n-best logits from a list.
+    :param logits:
+    :param n_best_size: int
+    :return: list
+            best indexes.
+    """
     index_and_score = sorted(
         enumerate(logits[1:], 1), key=lambda x: x[1], reverse=True)
     best_indexes = []
@@ -1231,8 +1247,13 @@ def get_best_indexes(logits, n_best_size):
     return best_indexes
 
 
+# todo: check function
 def compute_predictions(example):
-    """Converts an example into an NQEval object for evaluation."""
+    """
+    Converts an example into an NQEval object for evaluation.
+    :param example: EvalExample
+    :return: ScoreSummary
+    """
     predictions = []
     n_best_size = 10
     max_answer_length = 30
@@ -1305,7 +1326,15 @@ def compute_predictions(example):
 
 
 def compute_pred_dict(candidates_dict, dev_features, raw_results):
-    """Computes official answer key from raw logits."""
+    """
+    Computes official answer key from raw logits.
+    :param candidates_dict: dict{str:list}
+            example_id with its long_answer_candidates list.
+    :param dev_features: list
+    :param raw_results: collections.OrderedDict
+            E.g. OrderedDict([('x', 1), ('y', 2)])
+    :return: dict
+    """
 
     raw_results_by_id = {int(res["unique_id"]): res for res in raw_results}
 
@@ -1323,7 +1352,7 @@ def compute_pred_dict(candidates_dict, dev_features, raw_results):
     feature_ids = tf.cast(np.array(feature_ids), dtype=tf.int32).numpy()
     features_by_id = dict(zip(feature_ids, features))
 
-    # Join examplew with features and raw results.
+    # Join example with features and raw results.
     examples = []
 
     for example_id in examples_by_id:
@@ -1384,21 +1413,9 @@ def run():
     tokenizer = tokenization.FullTokenizer(
         vocab_file=FLAGS.vocab_file, do_lower_case=FLAGS.do_lower_case)
 
-    tpu_cluster_resolver = None
-    if FLAGS.use_tpu and FLAGS.tpu_name:
-        tpu_cluster_resolver = tf.distribute.cluster_resolver.TPUClusterResolver(
-            FLAGS.tpu_name, zone=FLAGS.tpu_zone, project=FLAGS.gcp_project)
-
-    is_per_host = tf.compat.v1.estimator.tpu.InputPipelineConfig.PER_HOST_V2
-    run_config = tf.compat.v1.estimator.tpu.RunConfig(
-        cluster=tpu_cluster_resolver,
-        master=FLAGS.master,
+    run_config = tf.estimator.RunConfig(
         model_dir=FLAGS.output_dir,
-        save_checkpoints_steps=FLAGS.save_checkpoints_steps,
-        tpu_config=tf.compat.v1.estimator.tpu.TPUConfig(
-            iterations_per_loop=FLAGS.iterations_per_loop,
-            num_shards=FLAGS.num_tpu_cores,
-            per_host_input_for_training=is_per_host))
+        save_checkpoints_steps=FLAGS.save_checkpoints_steps)
 
     num_train_steps = None
     num_warmup_steps = None
@@ -1416,15 +1433,12 @@ def run():
         num_train_steps=num_train_steps,
         num_warmup_steps=num_warmup_steps,
         use_tpu=FLAGS.use_tpu,
-        use_one_hot_embeddings=FLAGS.use_tpu)
+        use_one_hot_embeddings=FLAGS.use_one_hot_embeddings)
 
-    # If TPU is not available, this falls back to normal Estimator on CPU or GPU.
-    estimator = tf.compat.v1.estimator.tpu.TPUEstimator(
-        use_tpu=FLAGS.use_tpu,
+    estimator = tf.estimator.Estimator(
         model_fn=model_fn,
         config=run_config,
-        train_batch_size=FLAGS.train_batch_size,
-        predict_batch_size=FLAGS.predict_batch_size)
+        params={'batch_size': FLAGS.train_batch_size})
 
     if FLAGS.do_train:
         print("***** Running training on precomputed features *****")
@@ -1507,10 +1521,10 @@ def run():
 
         print("setting up eval features")
 
-        eval_features = [
-            tf.train.Example.FromString(r)
-            for r in tf.compat.v1.python_io.tf_record_iterator(eval_filename)
-        ]
+        raw_dataset = tf.data.TFRecordDataset(eval_filename)
+        eval_features = []
+        for raw_record in raw_dataset:
+            eval_features.append(tf.train.Example.FromString(raw_record.numpy()))
 
         print("compute_pred_dict")
 
@@ -1522,3 +1536,7 @@ def run():
 
         with tf.io.gfile.GFile(FLAGS.output_prediction_file, "w") as f:
             json.dump(predictions_json, f, indent=4)
+
+
+if __name__ == "__main__":
+    run()

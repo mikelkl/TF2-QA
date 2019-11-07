@@ -1,0 +1,11 @@
+CUDA_VISIBLE_DEVICES=0 python tf2_0_baseline_w_bert.py \
+  --logtostderr \
+  --train_precomputed_file=../input/bertjointbaseline/nq-train.tfrecords-00000-of-00001 \
+  --train_num_precomputed=494670 \
+  --learning_rate=3e-5 \
+  --num_train_epochs=3 \
+  --max_seq_length=512 \
+  --train_batch_size=2 \
+  --save_checkpoints_steps=5000 \
+  --do_train \
+  --do_predict
