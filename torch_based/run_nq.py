@@ -8,10 +8,11 @@ import os
 import random
 import glob
 import timeit
-import enum
 import numpy as np
 import torch
 import tensorflow as tf
+import json
+import pandas as pd
 from torch.utils.data import (DataLoader, RandomSampler, SequentialSampler,
                               TensorDataset)
 from torch.utils.data.distributed import DistributedSampler
@@ -34,6 +35,9 @@ from transformers import (WEIGHTS_NAME, BertConfig,
 from modeling import BertJointForNQ
 
 from transformers import AdamW, WarmupLinearSchedule
+
+from utils_nq import (AnswerType, read_nq_examples, convert_examples_to_features,
+                      RawResult, read_candidates_from_one_split, compute_pred_dict)
 
 # from utils_squad import (read_squad_examples, convert_examples_to_features,
 #                          RawResult, write_predictions,
@@ -69,18 +73,11 @@ def set_seed(args):
 def to_list(tensor):
     return tensor.detach().cpu().tolist()
 
-class AnswerType(enum.IntEnum):
-    """Type of NQ answer."""
-    UNKNOWN = 0
-    YES = 1
-    NO = 2
-    SHORT = 3
-    LONG = 4
 
 def train(args, train_dataset, model, tokenizer):
     """ Train the model """
     if args.local_rank in [-1, 0]:
-        tb_writer = SummaryWriter()
+        tb_writer = SummaryWriter(args.output_dir)
 
     args.train_batch_size = args.per_gpu_train_batch_size * max(1, args.n_gpu)
     train_sampler = RandomSampler(train_dataset) if args.local_rank == -1 else DistributedSampler(train_dataset)
@@ -103,6 +100,8 @@ def train(args, train_dataset, model, tokenizer):
         {'params': [p for n, p in model.named_parameters() if any(nd in n for nd in no_decay)], 'weight_decay': 0.0}
     ]
     optimizer = AdamW(optimizer_grouped_parameters, lr=args.learning_rate, eps=args.adam_epsilon)
+    if args.warmup_steps < 1:
+        args.warmup_steps = int(args.warmup_rate * t_total)
     scheduler = WarmupLinearSchedule(optimizer, warmup_steps=args.warmup_steps, t_total=t_total)
     if args.fp16:
         try:
@@ -131,6 +130,7 @@ def train(args, train_dataset, model, tokenizer):
                     torch.distributed.get_world_size() if args.local_rank != -1 else 1))
     logger.info("  Gradient Accumulation steps = %d", args.gradient_accumulation_steps)
     logger.info("  Total optimization steps = %d", t_total)
+    logger.info("  Warmup steps = %d", args.warmup_steps)
 
     global_step = 0
     tr_loss, logging_loss = 0.0, 0.0
@@ -161,7 +161,6 @@ def train(args, train_dataset, model, tokenizer):
                 loss = loss.mean()  # mean() to average on multi-gpu parallel (not distributed) training
             if args.gradient_accumulation_steps > 1:
                 loss = loss / args.gradient_accumulation_steps
-
 
             if args.fp16:
                 with amp.scale_loss(loss, optimizer) as scaled_loss:
@@ -304,6 +303,127 @@ def evaluate(args, model, tokenizer, prefix=""):
     results = evaluate_on_squad(evaluate_options)
     return results
 
+
+def predict(args, model, tokenizer, prefix=""):
+    dataset, examples, features = load_and_cache_examples(args, tokenizer, evaluate=True, output_examples=True)
+
+    if not os.path.exists(args.output_dir) and args.local_rank in [-1, 0]:
+        os.makedirs(args.output_dir)
+
+    args.eval_batch_size = args.per_gpu_eval_batch_size * max(1, args.n_gpu)
+    # Note that DistributedSampler samples randomly
+    eval_sampler = SequentialSampler(dataset) if args.local_rank == -1 else DistributedSampler(dataset)
+    eval_dataloader = DataLoader(dataset, sampler=eval_sampler, batch_size=args.eval_batch_size)
+
+    # multi-gpu evaluate
+    if args.n_gpu > 1:
+        model = torch.nn.DataParallel(model)
+
+    # Pred!
+    logger.info("***** Running predictions {} *****".format(prefix))
+    logger.info("  Num examples = %d", len(dataset))
+    logger.info("  Batch size = %d", args.eval_batch_size)
+    all_results = []
+    start_time = timeit.default_timer()
+    for batch in tqdm(eval_dataloader, desc="Predicting"):
+        model.eval()
+        batch = tuple(t.to(args.device) for t in batch)
+        with torch.no_grad():
+            inputs = {'input_ids': batch[0],
+                      'attention_mask': batch[1]
+                      }
+            if args.model_type != 'distilbert':
+                inputs['token_type_ids'] = None if args.model_type == 'xlm' else batch[2]  # XLM don't use segment_ids
+            example_indices = batch[3]
+            if args.model_type in ['xlnet', 'xlm']:
+                inputs.update({'cls_index': batch[4],
+                               'p_mask': batch[5]})
+            outputs = model(**inputs)
+
+        for i, example_index in enumerate(example_indices):
+            eval_feature = features[example_index.item()]
+            unique_id = int(eval_feature.unique_id)
+            if args.model_type in ['xlnet', 'xlm']:
+                # XLNet uses a more complex post-processing procedure
+                # result = RawResultExtended(unique_id=unique_id,
+                #                            start_top_log_probs=to_list(outputs[0][i]),
+                #                            start_top_index=to_list(outputs[1][i]),
+                #                            end_top_log_probs=to_list(outputs[2][i]),
+                #                            end_top_index=to_list(outputs[3][i]),
+                #                            cls_logits=to_list(outputs[4][i]))
+                pass
+            else:
+                result = RawResult(unique_id=unique_id,
+                                   start_logits=to_list(outputs[0][i]),
+                                   end_logits=to_list(outputs[1][i]),
+                                   answer_type_logits=to_list(outputs[2][i]))
+            all_results.append(result)
+
+    predTime = timeit.default_timer() - start_time
+    logger.info("  Prediction done in total %f secs (%f sec per example)", predTime, predTime / len(dataset))
+
+    logger.info("Going to candidates file")
+    candidates_dict = read_candidates_from_one_split(args.predict_file)
+
+    logger.info("Compute_pred_dict")
+    nq_pred_dict = compute_pred_dict(candidates_dict, features,
+                                     [r._asdict() for r in all_results])
+    predictions_json = {"predictions": list(nq_pred_dict.values())}
+
+    with open(args.output_prediction_file, "w") as f:
+        json.dump(predictions_json, f, indent=4)
+
+
+def make_submission(output_prediction_file, output_dir):
+    logger.info("***** Making submmision *****")
+    test_answers_df = pd.read_json(output_prediction_file)
+
+    def create_short_answer(entry):
+        # if entry["short_answers_score"] < 1.5:
+        #     return ""
+
+        answer = []
+        for short_answer in entry["short_answers"]:
+            if short_answer["start_token"] > -1:
+                answer.append(str(short_answer["start_token"]) + ":" + str(short_answer["end_token"]))
+        if entry["yes_no_answer"] != "NONE":
+            answer.append(entry["yes_no_answer"])
+        return " ".join(answer)
+
+    def create_long_answer(entry):
+        # if entry["long_answer_score"] < 1.5:
+        # return ""
+
+        answer = []
+        if entry["long_answer"]["start_token"] > -1:
+            answer.append(str(entry["long_answer"]["start_token"]) + ":" + str(entry["long_answer"]["end_token"]))
+        return " ".join(answer)
+
+    test_answers_df["long_answer_score"] = test_answers_df["predictions"].apply(lambda q: q["long_answer_score"])
+    test_answers_df["short_answer_score"] = test_answers_df["predictions"].apply(lambda q: q["short_answers_score"])
+
+    test_answers_df["long_answer"] = test_answers_df["predictions"].apply(create_long_answer)
+    test_answers_df["short_answer"] = test_answers_df["predictions"].apply(create_short_answer)
+    test_answers_df["example_id"] = test_answers_df["predictions"].apply(lambda q: str(q["example_id"]))
+
+    long_answers = dict(zip(test_answers_df["example_id"], test_answers_df["long_answer"]))
+    short_answers = dict(zip(test_answers_df["example_id"], test_answers_df["short_answer"]))
+
+    sample_submission = pd.read_csv("../input/tensorflow2-question-answering/sample_submission.csv")
+
+    long_prediction_strings = sample_submission[sample_submission["example_id"].str.contains("_long")].apply(
+        lambda q: long_answers[q["example_id"].replace("_long", "")], axis=1)
+    short_prediction_strings = sample_submission[sample_submission["example_id"].str.contains("_short")].apply(
+        lambda q: short_answers[q["example_id"].replace("_short", "")], axis=1)
+
+    sample_submission.loc[
+        sample_submission["example_id"].str.contains("_long"), "PredictionString"] = long_prediction_strings
+    sample_submission.loc[
+        sample_submission["example_id"].str.contains("_short"), "PredictionString"] = short_prediction_strings
+
+    sample_submission.to_csv(os.path.join(output_dir, "submission.csv"), index=False)
+
+
 def load_tfrecord(filename, evaluate=False):
     """
     :param filename: str
@@ -346,6 +466,7 @@ def load_tfrecord(filename, evaluate=False):
 
     return dataset
 
+
 def load_and_cache_examples(args, tokenizer, evaluate=False, output_examples=False):
     if args.local_rank not in [-1, 0] and not evaluate:
         torch.distributed.barrier()  # Make sure only the first process in distributed training process the dataset, and the others will use the cache
@@ -361,19 +482,14 @@ def load_and_cache_examples(args, tokenizer, evaluate=False, output_examples=Fal
         features = torch.load(cached_features_file)
     else:
         logger.info("Creating features from dataset file at %s", input_file)
-        examples = read_squad_examples(input_file=input_file,
-                                       is_training=not evaluate,
-                                       version_2_with_negative=args.version_2_with_negative)
-        features = convert_examples_to_features(examples=examples,
-                                                tokenizer=tokenizer,
-                                                max_seq_length=args.max_seq_length,
-                                                doc_stride=args.doc_stride,
-                                                max_query_length=args.max_query_length,
-                                                is_training=not evaluate,
-                                                cls_token_segment_id=2 if args.model_type in ['xlnet'] else 0,
-                                                pad_token_segment_id=3 if args.model_type in ['xlnet'] else 0,
-                                                cls_token_at_end=True if args.model_type in ['xlnet'] else False,
-                                                sequence_a_is_doc=True if args.model_type in ['xlnet'] else False)
+        examples = read_nq_examples(input_file=input_file,
+                                    is_training=not evaluate, args=args)
+        num_spans_to_ids, features = convert_examples_to_features(examples=examples,
+                                                                  tokenizer=tokenizer,
+                                                                  is_training=not evaluate,
+                                                                  args=args)
+        for spans, ids in num_spans_to_ids.items():
+            logger.info("Num split into %d = %d" % (spans, len(ids)))
         if args.local_rank in [-1, 0]:
             logger.info("Saving features into cached file %s", cached_features_file)
             torch.save(features, cached_features_file)
@@ -385,8 +501,12 @@ def load_and_cache_examples(args, tokenizer, evaluate=False, output_examples=Fal
     all_input_ids = torch.tensor([f.input_ids for f in features], dtype=torch.long)
     all_input_mask = torch.tensor([f.input_mask for f in features], dtype=torch.long)
     all_segment_ids = torch.tensor([f.segment_ids for f in features], dtype=torch.long)
-    all_cls_index = torch.tensor([f.cls_index for f in features], dtype=torch.long)
-    all_p_mask = torch.tensor([f.p_mask for f in features], dtype=torch.float)
+    if args.model_type in ['xlnet', 'xlm']:
+        all_cls_index = torch.tensor([f.cls_index for f in features], dtype=torch.long)
+        all_p_mask = torch.tensor([f.p_mask for f in features], dtype=torch.float)
+    else:
+        all_cls_index = torch.zeros(all_input_ids.size(), dtype=torch.long)
+        all_p_mask = torch.zeros(all_input_ids.size(), dtype=torch.float)
     if evaluate:
         all_example_index = torch.arange(all_input_ids.size(0), dtype=torch.long)
         dataset = TensorDataset(all_input_ids, all_input_mask, all_segment_ids,
@@ -408,11 +528,11 @@ def main():
 
     ## Required parameters
     parser.add_argument("--train_file", default=None, type=str,
-                        help="SQuAD json for training. E.g., train-v1.1.json")
+                        help="NQ json for training. E.g., simplified-nq-train.jsonl")
     parser.add_argument("--train_precomputed_file", default=None, type=str,
                         help="Precomputed tf records for training.")
     parser.add_argument("--predict_file", default=None, type=str,
-                        help="SQuAD json for predictions. E.g., dev-v1.1.json or test-v1.1.json")
+                        help="NQ json for predictions. E.g., simplified-nq-test.jsonl")
     parser.add_argument("--model_type", default=None, type=str, required=True,
                         help="Model type selected in the list: " + ", ".join(MODEL_CLASSES.keys()))
     parser.add_argument("--model_name_or_path", default=None, type=str, required=True,
@@ -446,6 +566,8 @@ def main():
                         help="Whether to run training.")
     parser.add_argument("--do_eval", action='store_true',
                         help="Whether to run eval on the dev set.")
+    parser.add_argument("--do_pred", action='store_true',
+                        help="Whether to run pred on the dev set.")
     parser.add_argument("--evaluate_during_training", action='store_true',
                         help="Rul evaluation during training at each logging step.")
     parser.add_argument("--do_lower_case", action='store_true',
@@ -469,7 +591,7 @@ def main():
                         help="Total number of training epochs to perform.")
     parser.add_argument("--max_steps", default=-1, type=int,
                         help="If > 0: set total number of training steps to perform. Override num_train_epochs.")
-    parser.add_argument("--warmup_steps", default=0, type=int,
+    parser.add_argument("--warmup_steps", default=0.1, type=float,
                         help="Linear warmup over warmup_steps.")
     parser.add_argument("--n_best_size", default=20, type=int,
                         help="The total number of n-best predictions to generate in the nbest_predictions.json output file.")
@@ -504,6 +626,18 @@ def main():
                              "See details at https://nvidia.github.io/apex/amp.html")
     parser.add_argument('--server_ip', type=str, default='', help="Can be used for distant debugging.")
     parser.add_argument('--server_port', type=str, default='', help="Can be used for distant debugging.")
+
+    parser.add_argument("--max_contexts", type=int, default=48,
+                        help="Maximum number of contexts to output for an example.")
+    parser.add_argument("--max_position", type=int, default=50,
+                        help="Maximum context position for which to generate special tokens.")
+    parser.add_argument("--skip_nested_contexts", type=bool, default=True,
+                        help="Completely ignore context that are not top level nodes in the page.")
+    parser.add_argument("--include_unknowns", type=float, default=-1.0,
+                        help="If positive, probability of including answers of type `UNKNOWN`.")
+    parser.add_argument("--output_prediction_file", type=str, default=None,
+                        help="Where to print predictions in NQ prediction format, to be passed to"
+                             "natural_questions.nq_eval.")
     args = parser.parse_args()
 
     if os.path.exists(args.output_dir) and os.listdir(
@@ -632,6 +766,13 @@ def main():
             results.update(result)
 
     logger.info("Results: {}".format(results))
+
+    if args.do_pred and args.local_rank in [-1, 0]:
+        logger.info("Evaluate the following checkpoints: %s", args.model_name_or_path)
+        if not args.output_prediction_file:
+            args.output_prediction_file = os.path.join(args.output_dir, "predictions.json")
+        predict(args, model, tokenizer)
+        make_submission(args.output_prediction_file, args.output_dir)
 
     return results
 
