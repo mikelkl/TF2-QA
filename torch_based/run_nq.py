@@ -367,7 +367,8 @@ def predict(args, model, tokenizer, prefix=""):
 
     logger.info("Compute_pred_dict")
     nq_pred_dict = compute_pred_dict(candidates_dict, features,
-                                     [r._asdict() for r in all_results])
+                                     [r._asdict() for r in all_results],
+                                     args.n_best_size, args.max_answer_length)
     predictions_json = {"predictions": list(nq_pred_dict.values())}
 
     with open(args.output_prediction_file, "w") as f:
@@ -399,8 +400,8 @@ def make_submission(output_prediction_file, output_dir):
             answer.append(str(entry["long_answer"]["start_token"]) + ":" + str(entry["long_answer"]["end_token"]))
         return " ".join(answer)
 
-    test_answers_df["long_answer_score"] = test_answers_df["predictions"].apply(lambda q: q["long_answer_score"])
-    test_answers_df["short_answer_score"] = test_answers_df["predictions"].apply(lambda q: q["short_answers_score"])
+    for var_name in ['long_answer_score', 'short_answer_score', 'answer_type']:
+        test_answers_df[var_name] = test_answers_df['predictions'].apply(lambda q: q[var_name])
 
     test_answers_df["long_answer"] = test_answers_df["predictions"].apply(create_long_answer)
     test_answers_df["short_answer"] = test_answers_df["predictions"].apply(create_short_answer)

@@ -23,6 +23,7 @@ RawResult = collections.namedtuple(
     "RawResult",
     ["unique_id", "start_logits", "end_logits", "answer_type_logits"])
 
+
 class AnswerType(enum.IntEnum):
     """Type of NQ answer."""
     UNKNOWN = 0
@@ -64,6 +65,7 @@ class NqExample(object):
         self.start_position = start_position
         self.end_position = end_position
 
+
 class EvalExample(object):
     """Eval data available for a single example."""
 
@@ -72,6 +74,7 @@ class EvalExample(object):
         self.candidates = candidates
         self.results = {}
         self.features = {}
+
 
 def get_candidate_type(e, idx):
     """Returns the candidate's type: Table, Paragraph, List or Other."""
@@ -469,8 +472,10 @@ class InputFeatures(object):
         self.answer_text = answer_text
         self.answer_type = answer_type
 
+
 # A special token in NQ is made of non-space chars enclosed in square brackets.
 _SPECIAL_TOKENS_RE = re.compile(r"^\[[^ ]*\]$", re.UNICODE)
+
 
 def tokenize(tokenizer, text, apply_basic_tokenization=False):
     """Tokenizes text, optionally looking up special tokens separately.
@@ -501,6 +506,7 @@ def tokenize(tokenizer, text, apply_basic_tokenization=False):
         else:
             tokens.extend(tokenize_fn(token))
     return tokens
+
 
 def check_is_max_context(doc_spans, cur_span_index, position):
     """Check if this is the 'max context' doc span for the token."""
@@ -536,6 +542,7 @@ def check_is_max_context(doc_spans, cur_span_index, position):
             best_span_index = span_index
 
     return cur_span_index == best_span_index
+
 
 def convert_single_example(example, tokenizer, is_training, args):
     """Converts a single NqExample into a list of InputFeatures."""
@@ -701,6 +708,7 @@ def convert_examples_to_features(examples, tokenizer, is_training, args):
 
     return num_spans_to_ids, feature_list
 
+
 def read_candidates_from_one_split(input_path):
     """
     Read candidates from a single jsonl file.
@@ -717,10 +725,11 @@ def read_candidates_from_one_split(input_path):
 
     return candidates_dict
 
+
 def get_best_indexes(logits, n_best_size):
     """
     Get the n-best logits from a list.
-    :param logits:
+    :param logits: list
     :param n_best_size: int
     :return: list
             best indexes.
@@ -734,6 +743,7 @@ def get_best_indexes(logits, n_best_size):
         best_indexes.append(index_and_score[i][0])
     return best_indexes
 
+
 class ScoreSummary(object):
 
     def __init__(self):
@@ -742,17 +752,30 @@ class ScoreSummary(object):
         self.cls_token_score = None
         self.answer_type_logits = None
 
+
 Span = collections.namedtuple("Span", ["start_token_idx", "end_token_idx"])
 
-def compute_predictions(example):
+
+def top_k_indices(logits, n_best_size, token_map):
+    """
+
+    :param logits: list
+    :param n_best_size: int
+    :param token_map: numpy.ndarray
+    :return: numpy.ndarray
+    """
+    indices = np.argsort(logits[1:]) + 1
+    indices = indices[token_map[indices] != -1]
+    return indices[-n_best_size:]
+
+
+def compute_predictions(example, n_best_size=10, max_answer_length=30):
     """
     Converts an example into an NQEval object for evaluation.
     :param example: EvalExample
     :return: ScoreSummary
     """
     predictions = []
-    n_best_size = 10
-    max_answer_length = 30
 
     for unique_id, result in example.results.items():
         if unique_id not in example.features:
@@ -761,39 +784,37 @@ def compute_predictions(example):
         token_map = [-1] * len(example.features[unique_id].input_ids)
         for k, v in example.features[unique_id].token_to_orig_map.items():
             token_map[k] = v
-        start_indexes = get_best_indexes(result["start_logits"], n_best_size)
-        end_indexes = get_best_indexes(result["end_logits"], n_best_size)
-        for start_index in start_indexes:
-            for end_index in end_indexes:
-                if end_index < start_index:
-                    continue
-                if token_map[start_index] == -1:
-                    continue
-                if token_map[end_index] == -1:
-                    continue
-                length = end_index - start_index + 1
-                if length > max_answer_length:
-                    continue
-                summary = ScoreSummary()
-                summary.short_span_score = (
-                        result["start_logits"][start_index] +
-                        result["end_logits"][end_index])
-                summary.cls_token_score = (
-                        result["start_logits"][0] + result["end_logits"][0])
-                summary.answer_type_logits = result["answer_type_logits"]
-                start_span = token_map[start_index]
-                end_span = token_map[end_index] + 1
+        token_map = np.array(token_map)
 
-                # Span logits minus the cls logits seems to be close to the best.
-                score = summary.short_span_score - summary.cls_token_score
-                predictions.append((score, summary, start_span, end_span))
+        start_indexes = top_k_indices(result["start_logits"], n_best_size, token_map)
+        if len(start_indexes) == 0:
+            continue
+        end_indexes = top_k_indices(result["end_logits"], n_best_size, token_map)
+        if len(end_indexes) == 0:
+            continue
+        indexes = np.array(list(np.broadcast(start_indexes[None], end_indexes[:, None])))
+        indexes = indexes[(indexes[:, 0] < indexes[:, 1]) * (indexes[:, 1] - indexes[:, 0] < max_answer_length)]
+        for i, (start_index, end_index) in enumerate(indexes):
+            summary = ScoreSummary()
+            summary.short_span_score = (
+                    result["start_logits"][start_index] +
+                    result["end_logits"][end_index])
+            summary.cls_token_score = (
+                    result["start_logits"][0] + result["end_logits"][0])
+            summary.answer_type_logits = result["answer_type_logits"] - np.array(result["answer_type_logits"]).mean()
+            start_span = token_map[start_index]
+            end_span = token_map[end_index] + 1
+
+            # Span logits minus the cls logits seems to be close to the best.
+            score = summary.short_span_score - summary.cls_token_score
+            predictions.append((score, i, summary, start_span, end_span))
 
     short_span = Span(-1, -1)
     long_span = Span(-1, -1)
     score = 0
     summary = ScoreSummary()
     if predictions:
-        score, summary, start_span, end_span = sorted(predictions, reverse=True)[0]
+        score, _, summary, start_span, end_span = sorted(predictions, reverse=True)[0]
         short_span = Span(start_span, end_span)
         for c in example.candidates:
             start = short_span.start_token_idx
@@ -803,27 +824,29 @@ def compute_predictions(example):
                 break
 
     summary.predicted_label = {
-        "example_id": example.example_id,
+        "example_id": int(example.example_id),
         "long_answer": {
-            "start_token": long_span.start_token_idx,
-            "end_token": long_span.end_token_idx,
+            "start_token": int(long_span.start_token_idx),
+            "end_token": int(long_span.end_token_idx),
             "start_byte": -1,
             "end_byte": -1
         },
-        "long_answer_score": score,
+        "long_answer_score": float(score),
         "short_answers": [{
-            "start_token": short_span.start_token_idx,
-            "end_token": short_span.end_token_idx,
+            "start_token": int(short_span.start_token_idx),
+            "end_token": int(short_span.end_token_idx),
             "start_byte": -1,
             "end_byte": -1
         }],
-        "short_answers_score": score,
-        "yes_no_answer": "NONE"
+        "short_answer_score": float(score),
+        "yes_no_answer": "NONE",
+        "answer_type_logits": summary.answer_type_logits.tolist(),
+        "answer_type": int(np.argmax(summary.answer_type_logits))
     }
-
     return summary
 
-def compute_pred_dict(candidates_dict, dev_features, raw_results):
+
+def compute_pred_dict(candidates_dict, dev_features, raw_results, n_best_size=10, max_answer_length=30):
     """
     Computes official answer key from raw logits.
     :param candidates_dict: dict{str:list}
@@ -833,40 +856,28 @@ def compute_pred_dict(candidates_dict, dev_features, raw_results):
             E.g. OrderedDict([('x', 1), ('y', 2)])
     :return: dict
     """
+    raw_results_by_id = [(int(res["unique_id"]), 1, res) for res in raw_results]
+    examples_by_id = [(int(k), 0, v) for k, v in candidates_dict.items()]
+    features_by_id = [(int(d.unique_id), 2, d) for d in dev_features]
 
-    raw_results_by_id = {int(res["unique_id"]): res for res in raw_results}
-
-    # Cast example id to int32 for each example, similarly to the raw results.
-    all_candidates = candidates_dict.items()
-    example_ids = np.array([int(k) for k, _ in all_candidates], dtype=np.int64)
-    examples_by_id = dict(zip(example_ids, all_candidates))
-
-    # Cast unique_id also to int64 for features.
-    feature_ids = []
-    features = []
-    for f in dev_features:
-        feature_ids.append(f.unique_id)
-        features.append(f)
-    feature_ids = np.array(feature_ids, dtype=np.int64)
-    features_by_id = dict(zip(feature_ids, features))
-
-    # Join example with features and raw results.
+    # Join examples with features and raw results.
     examples = []
-
-    for example_id in examples_by_id:
-        example = examples_by_id[example_id]
-        examples.append(EvalExample(example[0], example[1]))
-        examples[-1].features[example_id] = features_by_id[example_id]
-        examples[-1].results[example_id] = raw_results_by_id[example_id]
+    print('merging examples...')
+    merged = sorted(examples_by_id + raw_results_by_id + features_by_id)
+    print('done.')
+    for idx, type_, datum in merged:
+        if type_ == 0:  # isinstance(datum, list):
+            examples.append(EvalExample(idx, datum))
+        elif type_ == 2:  # "token_map" in datum:
+            examples[-1].features[idx] = datum
+        else:
+            examples[-1].results[idx] = datum
 
     # Construct prediction objects.
-    summary_dict = {}
+    logger.info('Computing predictions...')
     nq_pred_dict = {}
-    for e in examples:
-        summary = compute_predictions(e)
-        summary_dict[e.example_id] = summary
+    for e in tqdm(examples, desc="Computing predictions..."):
+        summary = compute_predictions(e, n_best_size=10, max_answer_length=30)
         nq_pred_dict[e.example_id] = summary.predicted_label
-        if len(nq_pred_dict) % 100 == 0:
-            print("Examples processed: %d" % len(nq_pred_dict))
 
     return nq_pred_dict

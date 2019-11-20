@@ -15,7 +15,7 @@
 #    --save_steps 0.25 --overwrite_output_dir
 
 # predict
-CUDA_VISIBLE_DEVICES=0 python -m pdb run_nq.py \
+CUDA_VISIBLE_DEVICES=7 python -m pdb run_nq.py \
     --model_type bert \
     --model_name_or_path ../output/models/bert-large-uncased-whole-word-masking-finetuned-squad/pytorch_model.bin \
     --config_name ../output/models/bert-large-uncased-whole-word-masking-finetuned-squad/config.json \
@@ -25,6 +25,7 @@ CUDA_VISIBLE_DEVICES=0 python -m pdb run_nq.py \
     --fp16 \
     --max_seq_length 512 \
     --output_dir ../output/models/bert-large-uncased-whole-word-masking-finetuned-squad/ \
-    --per_gpu_eval_batch_size=64 \
+    --per_gpu_eval_batch_size=28 \
     --overwrite_output_dir \
-    --predict_file ../input/tensorflow2-question-answering/simplified-nq-test.jsonl
+    --predict_file ../input/tensorflow2-question-answering/simplified-nq-test.jsonl \
+    --output_prediction_file ../output/models/bert-large-uncased-whole-word-masking-finetuned-squad/predictions_pp.json
