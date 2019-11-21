@@ -220,7 +220,7 @@ def train(args, train_dataset, model, tokenizer):
 
 
 def evaluate(args, model, tokenizer, prefix=""):
-    dataset, examples, features = load_and_cache_examples(args, tokenizer, evaluate=True, output_examples=True)
+    dataset, examples, features = load_and_cache_examples(args, tokenizer, mode="dev", output_examples=True)
 
     if not os.path.exists(args.output_dir) and args.local_rank in [-1, 0]:
         os.makedirs(args.output_dir)
@@ -305,7 +305,7 @@ def evaluate(args, model, tokenizer, prefix=""):
 
 
 def predict(args, model, tokenizer, prefix=""):
-    dataset, examples, features = load_and_cache_examples(args, tokenizer, evaluate=True, output_examples=True)
+    dataset, examples, features = load_and_cache_examples(args, tokenizer, mode="pred", output_examples=True)
 
     if not os.path.exists(args.output_dir) and args.local_rank in [-1, 0]:
         os.makedirs(args.output_dir)
@@ -468,21 +468,31 @@ def load_tfrecord(filename, evaluate=False):
     return dataset
 
 
-def load_and_cache_examples(args, tokenizer, evaluate=False, output_examples=False):
+def load_and_cache_examples(args, tokenizer, mode="train", output_examples=False):
+    """
+    :param args: argparse.Namespace
+    :param tokenizer: transformers.tokenization_utils.PreTrainedTokenizer
+    :param mode: str, ['train', 'dev', 'pred'], default='train'
+    :param output_examples: bool
+    :return: (torch.utils.data.dataset.TensorDataset, list[NqExample], list[InputFeatures]), if output_examples is True
+            torch.utils.data.dataset.TensorDataset, if output_examples is False
+    """
+    assert mode in ['train', 'dev', 'pred'], "mode must be one of train, dev, pred"
+    evaluate = (mode != "train")
     if args.local_rank not in [-1, 0] and not evaluate:
         torch.distributed.barrier()  # Make sure only the first process in distributed training process the dataset, and the others will use the cache
 
     # Load data features from cache or dataset file
     input_file = args.predict_file if evaluate else args.train_file
-    cached_features_file = os.path.join(os.path.dirname(input_file), 'cached_{}_{}_{}'.format(
-        'dev' if evaluate else 'train',
+    cached_features_example_file = os.path.join(os.path.dirname(input_file), 'cached_{}_{}_{}'.format(
+        mode,
         list(filter(None, args.model_name_or_path.split('/'))).pop(),
         str(args.max_seq_length)))
-    if os.path.exists(cached_features_file) and not args.overwrite_cache and not output_examples:
-        logger.info("Loading features from cached file %s", cached_features_file)
-        features = torch.load(cached_features_file)
+    if os.path.exists(cached_features_example_file) and not args.overwrite_cache:
+        logger.info("Loading features and examples from cached file %s", cached_features_example_file)
+        features, examples = torch.load(cached_features_example_file)
     else:
-        logger.info("Creating features from dataset file at %s", input_file)
+        logger.info("Creating features and examples from dataset file at %s", input_file)
         examples = read_nq_examples(input_file=input_file,
                                     is_training=not evaluate, args=args)
         num_spans_to_ids, features = convert_examples_to_features(examples=examples,
@@ -492,8 +502,8 @@ def load_and_cache_examples(args, tokenizer, evaluate=False, output_examples=Fal
         for spans, ids in num_spans_to_ids.items():
             logger.info("Num split into %d = %d" % (spans, len(ids)))
         if args.local_rank in [-1, 0]:
-            logger.info("Saving features into cached file %s", cached_features_file)
-            torch.save(features, cached_features_file)
+            logger.info("Saving features and examples into cached file %s", cached_features_example_file)
+            torch.save((features, examples), cached_features_example_file)
 
     if args.local_rank == 0 and not evaluate:
         torch.distributed.barrier()  # Make sure only the first process in distributed training process the dataset, and the others will use the cache
@@ -715,7 +725,7 @@ def main():
         if args.train_precomputed_file:
             train_dataset = load_tfrecord(args.train_precomputed_file, evaluate=False)
         elif args.train_file:
-            train_dataset = load_and_cache_examples(args, tokenizer, evaluate=False, output_examples=False)
+            train_dataset = load_and_cache_examples(args, tokenizer, mode="train", output_examples=False)
         else:
             raise ValueError("If `do_train` is True, then `train_precomputed_file` or `train_file` must be specified.")
         global_step, tr_loss = train(args, train_dataset, model, tokenizer)

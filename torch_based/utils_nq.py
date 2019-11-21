@@ -458,6 +458,21 @@ class InputFeatures(object):
                  end_position=None,
                  answer_text="",
                  answer_type=AnswerType.SHORT):
+        """
+        :param unique_id:
+        :param example_index:
+        :param doc_span_index:
+        :param tokens:
+        :param token_to_orig_map: map index of each token in tokens field from current sliding window to original context
+        :param token_is_max_context:
+        :param input_ids:
+        :param input_mask:
+        :param segment_ids:
+        :param start_position:
+        :param end_position:
+        :param answer_text:
+        :param answer_type:
+        """
         self.unique_id = unique_id
         self.example_index = example_index
         self.doc_span_index = doc_span_index
@@ -548,7 +563,7 @@ def convert_single_example(example, tokenizer, is_training, args):
     """Converts a single NqExample into a list of InputFeatures."""
     tok_to_orig_index = []
     orig_to_tok_index = []
-    all_doc_tokens = []
+    all_doc_tokens = []  # all subtokens of original doc after tokenizing
     features = []
     for (i, token) in enumerate(example.doc_tokens):
         orig_to_tok_index.append(len(all_doc_tokens))
@@ -582,6 +597,8 @@ def convert_single_example(example, tokenizer, is_training, args):
         else:
             tok_end_position = len(all_doc_tokens) - 1
 
+    # Get max tokens number for original doc,
+    # should minus query tokens number and 3 special tokens
     # The -3 accounts for [CLS], [SEP] and [SEP]
     max_tokens_for_doc = args.max_seq_length - len(query_tokens) - 3
 
@@ -593,13 +610,16 @@ def convert_single_example(example, tokenizer, is_training, args):
     doc_spans = []
     start_offset = 0
     while start_offset < len(all_doc_tokens):
-        length = len(all_doc_tokens) - start_offset
-        length = min(length, max_tokens_for_doc)
+        length = len(all_doc_tokens) - start_offset  # compute number of tokens remaining unsliding
+        length = min(length, max_tokens_for_doc)  # determine current sliding window size
         doc_spans.append(_DocSpan(start=start_offset, length=length))
+
+        # Consider case for reaching end of original doc
         if start_offset + length == len(all_doc_tokens):
             break
         start_offset += min(length, args.doc_stride)
 
+    # Convert window + query + special tokens to feature
     for (doc_span_index, doc_span) in enumerate(doc_spans):
         tokens = []
         token_to_orig_map = {}
@@ -696,6 +716,7 @@ def convert_examples_to_features(examples, tokenizer, is_training, args):
     """Converts a list of NqExamples into InputFeatures."""
     num_spans_to_ids = collections.defaultdict(list)
     feature_list = []
+    logger.info("Converting a list of NqExamples into InputFeatures ...")
     for example in tqdm(examples, desc="Converting"):
         example_index = example.example_id
         features = convert_single_example(example, tokenizer, is_training, args)
@@ -758,14 +779,19 @@ Span = collections.namedtuple("Span", ["start_token_idx", "end_token_idx"])
 
 def top_k_indices(logits, n_best_size, token_map):
     """
-
+    Get top k best logits indices in token_map.
     :param logits: list
     :param n_best_size: int
     :param token_map: numpy.ndarray
     :return: numpy.ndarray
     """
+    # Compute the indices that would sort logits except fist [CLS] token in ascending order
+    # len: 512 -> 511
     indices = np.argsort(logits[1:]) + 1
+    # select logits indices from original doc
+    # will delete tokens from query and special tokens
     indices = indices[token_map[indices] != -1]
+    # get top n best logits indices
     return indices[-n_best_size:]
 
 
@@ -780,7 +806,9 @@ def compute_predictions(example, n_best_size=10, max_answer_length=30):
     for unique_id, result in example.results.items():
         if unique_id not in example.features:
             raise ValueError("No feature found with unique_id:", unique_id)
-        # token_map = example.features[unique_id]["token_map"].int64_list.value
+        # convert dict-style token_to_orig_map to list-style token_map,
+        # key -> index, value -> element
+        # -1 indicate not belong to original doc
         token_map = [-1] * len(example.features[unique_id].input_ids)
         for k, v in example.features[unique_id].token_to_orig_map.items():
             token_map[k] = v
@@ -792,7 +820,9 @@ def compute_predictions(example, n_best_size=10, max_answer_length=30):
         end_indexes = top_k_indices(result["end_logits"], n_best_size, token_map)
         if len(end_indexes) == 0:
             continue
+        # get all combinations between start_indexes and end_indexes
         indexes = np.array(list(np.broadcast(start_indexes[None], end_indexes[:, None])))
+        # filter out combinations satisfy: start < end and (end - start) < max_answer_length
         indexes = indexes[(indexes[:, 0] < indexes[:, 1]) * (indexes[:, 1] - indexes[:, 0] < max_answer_length)]
         for i, (start_index, end_index) in enumerate(indexes):
             summary = ScoreSummary()
@@ -851,20 +881,29 @@ def compute_pred_dict(candidates_dict, dev_features, raw_results, n_best_size=10
     Computes official answer key from raw logits.
     :param candidates_dict: dict{str:list}
             example_id with its long_answer_candidates list.
-    :param dev_features: list
+    :param dev_features: list[InputFeatures]
     :param raw_results: collections.OrderedDict
-            E.g. OrderedDict([('x', 1), ('y', 2)])
-    :return: dict
+            E.g. OrderedDict([('unique_id', -1220107454853145579),
+            ('start_logits', [1.6588343381881714, ...],
+            ('end_logits', [1.8869664669036865, ...]),
+            ('answer_type_logits', [2.1452865600585938, ...])]))
+    :return: dict{int:dict}
     """
-    raw_results_by_id = [(int(res["unique_id"]), 1, res) for res in raw_results]
     examples_by_id = [(int(k), 0, v) for k, v in candidates_dict.items()]
+    raw_results_by_id = [(int(res["unique_id"]), 1, res) for res in raw_results]
     features_by_id = [(int(d.unique_id), 2, d) for d in dev_features]
+
+    import ipdb;
+    ipdb.set_trace()
 
     # Join examples with features and raw results.
     examples = []
-    print('merging examples...')
+    logger.info('merging examples...')
+    # Put example, result and feature for identical unique_id adjacent
+    # E.g [(-9198586108074363474, 0, `example`), (-9198586108074363474, 0, `result`),
+    # (-9198586108074363474, 0, `feature`), ...]
     merged = sorted(examples_by_id + raw_results_by_id + features_by_id)
-    print('done.')
+    logger.info('done.')
     for idx, type_, datum in merged:
         if type_ == 0:  # isinstance(datum, list):
             examples.append(EvalExample(idx, datum))
@@ -877,7 +916,7 @@ def compute_pred_dict(candidates_dict, dev_features, raw_results, n_best_size=10
     logger.info('Computing predictions...')
     nq_pred_dict = {}
     for e in tqdm(examples, desc="Computing predictions..."):
-        summary = compute_predictions(e, n_best_size=10, max_answer_length=30)
+        summary = compute_predictions(e, n_best_size, max_answer_length)
         nq_pred_dict[e.example_id] = summary.predicted_label
 
     return nq_pred_dict
