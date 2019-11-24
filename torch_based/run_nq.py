@@ -39,6 +39,8 @@ from transformers import AdamW, WarmupLinearSchedule
 from utils_nq import (AnswerType, read_nq_examples, convert_examples_to_features,
                       RawResult, read_candidates_from_one_split, compute_pred_dict)
 
+from nq_eval import score_answers, get_metrics_with_answer_stats
+
 # from utils_squad import (read_squad_examples, convert_examples_to_features,
 #                          RawResult, write_predictions,
 #                          RawResultExtended, write_predictions_extended)
@@ -259,48 +261,36 @@ def evaluate(args, model, tokenizer, prefix=""):
             eval_feature = features[example_index.item()]
             unique_id = int(eval_feature.unique_id)
             if args.model_type in ['xlnet', 'xlm']:
+                raise NotImplementedError
                 # XLNet uses a more complex post-processing procedure
-                result = RawResultExtended(unique_id=unique_id,
-                                           start_top_log_probs=to_list(outputs[0][i]),
-                                           start_top_index=to_list(outputs[1][i]),
-                                           end_top_log_probs=to_list(outputs[2][i]),
-                                           end_top_index=to_list(outputs[3][i]),
-                                           cls_logits=to_list(outputs[4][i]))
+                # result = RawResultExtended(unique_id=unique_id,
+                #                            start_top_log_probs=to_list(outputs[0][i]),
+                #                            start_top_index=to_list(outputs[1][i]),
+                #                            end_top_log_probs=to_list(outputs[2][i]),
+                #                            end_top_index=to_list(outputs[3][i]),
+                #                            cls_logits=to_list(outputs[4][i]))
             else:
                 result = RawResult(unique_id=unique_id,
                                    start_logits=to_list(outputs[0][i]),
-                                   end_logits=to_list(outputs[1][i]))
+                                   end_logits=to_list(outputs[1][i]),
+                                   answer_type_logits=to_list(outputs[2][i]))
             all_results.append(result)
 
     evalTime = timeit.default_timer() - start_time
     logger.info("  Evaluation done in total %f secs (%f sec per example)", evalTime, evalTime / len(dataset))
 
-    # Compute predictions
-    output_prediction_file = os.path.join(args.output_dir, "predictions_{}.json".format(prefix))
-    output_nbest_file = os.path.join(args.output_dir, "nbest_predictions_{}.json".format(prefix))
-    if args.version_2_with_negative:
-        output_null_log_odds_file = os.path.join(args.output_dir, "null_odds_{}.json".format(prefix))
-    else:
-        output_null_log_odds_file = None
+    logger.info("Going to candidates file")
+    candidates_dict = read_candidates_from_one_split(args.predict_file)
 
-    if args.model_type in ['xlnet', 'xlm']:
-        # XLNet uses a more complex post-processing procedure
-        write_predictions_extended(examples, features, all_results, args.n_best_size,
-                                   args.max_answer_length, output_prediction_file,
-                                   output_nbest_file, output_null_log_odds_file, args.predict_file,
-                                   model.config.start_n_top, model.config.end_n_top,
-                                   args.version_2_with_negative, tokenizer, args.verbose_logging)
-    else:
-        write_predictions(examples, features, all_results, args.n_best_size,
-                          args.max_answer_length, args.do_lower_case, output_prediction_file,
-                          output_nbest_file, output_null_log_odds_file, args.verbose_logging,
-                          args.version_2_with_negative, args.null_score_diff_threshold)
+    logger.info("Compute_pred_dict")
+    nq_pred_dict = compute_pred_dict(candidates_dict, features,
+                                     [r._asdict() for r in all_results],
+                                     args.n_best_size, args.max_answer_length)
 
-    # Evaluate with the official SQuAD script
-    evaluate_options = EVAL_OPTS(data_file=args.predict_file,
-                                 pred_file=output_prediction_file,
-                                 na_prob_file=output_null_log_odds_file)
-    results = evaluate_on_squad(evaluate_options)
+    logger.info("Computing f1 score")
+    nq_annotation_dict = {e.example_id: e for e in examples}
+    long_answer_stats, short_answer_stats = score_answers(nq_annotation_dict, nq_pred_dict)
+    metrics = get_metrics_with_answer_stats(long_answer_stats, short_answer_stats)
     return results
 
 
