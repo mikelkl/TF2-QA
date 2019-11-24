@@ -380,15 +380,20 @@ def make_submission(output_prediction_file, output_dir):
     test_answers_df = pd.read_json(output_prediction_file)
 
     def create_short_answer(entry):
+        """
+        :param entry: dict
+        :return: str
+        """
         # if entry["short_answers_score"] < 1.5:
         #     return ""
+
+        if entry["yes_no_answer"] != "NONE":
+            return entry["yes_no_answer"]
 
         answer = []
         for short_answer in entry["short_answers"]:
             if short_answer["start_token"] > -1:
                 answer.append(str(short_answer["start_token"]) + ":" + str(short_answer["end_token"]))
-        if entry["yes_no_answer"] != "NONE":
-            answer.append(entry["yes_no_answer"])
         return " ".join(answer)
 
     def create_long_answer(entry):

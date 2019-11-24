@@ -853,6 +853,14 @@ def compute_predictions(example, n_best_size=10, max_answer_length=30):
                 long_span = Span(c["start_token"], c["end_token"])
                 break
 
+    answer_type = int(np.argmax(summary.answer_type_logits))
+    if answer_type == AnswerType.YES:
+        yes_no_answer = "YES"
+    elif answer_type == AnswerType.NO:
+        yes_no_answer = "NO"
+    else:
+        yes_no_answer = "NONE"
+
     summary.predicted_label = {
         "example_id": int(example.example_id),
         "long_answer": {
@@ -869,9 +877,9 @@ def compute_predictions(example, n_best_size=10, max_answer_length=30):
             "end_byte": -1
         }],
         "short_answer_score": float(score),
-        "yes_no_answer": "NONE",
+        "yes_no_answer": yes_no_answer,
         "answer_type_logits": summary.answer_type_logits.tolist(),
-        "answer_type": int(np.argmax(summary.answer_type_logits))
+        "answer_type": answer_type
     }
     return summary
 
@@ -892,9 +900,6 @@ def compute_pred_dict(candidates_dict, dev_features, raw_results, n_best_size=10
     examples_by_id = [(int(k), 0, v) for k, v in candidates_dict.items()]
     raw_results_by_id = [(int(res["unique_id"]), 1, res) for res in raw_results]
     features_by_id = [(int(d.unique_id), 2, d) for d in dev_features]
-
-    import ipdb;
-    ipdb.set_trace()
 
     # Join examples with features and raw results.
     examples = []
