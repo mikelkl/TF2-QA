@@ -39,7 +39,7 @@ from transformers import AdamW, WarmupLinearSchedule
 from utils_nq import (AnswerType, read_nq_examples, convert_examples_to_features,
                       RawResult, read_candidates_from_one_split, compute_pred_dict)
 
-from nq_eval import score_answers, get_metrics_with_answer_stats
+from nq_eval import get_metrics_as_dict
 
 # from utils_squad import (read_squad_examples, convert_examples_to_features,
 #                          RawResult, write_predictions,
@@ -260,20 +260,10 @@ def evaluate(args, model, tokenizer, prefix=""):
         for i, example_index in enumerate(example_indices):
             eval_feature = features[example_index.item()]
             unique_id = int(eval_feature.unique_id)
-            if args.model_type in ['xlnet', 'xlm']:
-                raise NotImplementedError
-                # XLNet uses a more complex post-processing procedure
-                # result = RawResultExtended(unique_id=unique_id,
-                #                            start_top_log_probs=to_list(outputs[0][i]),
-                #                            start_top_index=to_list(outputs[1][i]),
-                #                            end_top_log_probs=to_list(outputs[2][i]),
-                #                            end_top_index=to_list(outputs[3][i]),
-                #                            cls_logits=to_list(outputs[4][i]))
-            else:
-                result = RawResult(unique_id=unique_id,
-                                   start_logits=to_list(outputs[0][i]),
-                                   end_logits=to_list(outputs[1][i]),
-                                   answer_type_logits=to_list(outputs[2][i]))
+            result = RawResult(unique_id=unique_id,
+                               start_logits=to_list(outputs[0][i]),
+                               end_logits=to_list(outputs[1][i]),
+                               answer_type_logits=to_list(outputs[2][i]))
             all_results.append(result)
 
     evalTime = timeit.default_timer() - start_time
@@ -287,10 +277,12 @@ def evaluate(args, model, tokenizer, prefix=""):
                                      [r._asdict() for r in all_results],
                                      args.n_best_size, args.max_answer_length)
 
+    logger.info(f"Saving predictions to {args.output_prediction_file}")
+    with open(args.output_prediction_file, 'w') as f:
+        json.dump({'predictions': list(nq_pred_dict.values())}, f)
+
     logger.info("Computing f1 score")
-    nq_annotation_dict = {e.example_id: e for e in examples}
-    long_answer_stats, short_answer_stats = score_answers(nq_annotation_dict, nq_pred_dict)
-    metrics = get_metrics_with_answer_stats(long_answer_stats, short_answer_stats)
+    results = get_metrics_as_dict(args.predict_file, args.output_prediction_file)
     return results
 
 
@@ -334,6 +326,7 @@ def predict(args, model, tokenizer, prefix=""):
             eval_feature = features[example_index.item()]
             unique_id = int(eval_feature.unique_id)
             if args.model_type in ['xlnet', 'xlm']:
+                raise NotImplementedError
                 # XLNet uses a more complex post-processing procedure
                 # result = RawResultExtended(unique_id=unique_id,
                 #                            start_top_log_probs=to_list(outputs[0][i]),
@@ -341,7 +334,6 @@ def predict(args, model, tokenizer, prefix=""):
                 #                            end_top_log_probs=to_list(outputs[2][i]),
                 #                            end_top_index=to_list(outputs[3][i]),
                 #                            cls_logits=to_list(outputs[4][i]))
-                pass
             else:
                 result = RawResult(unique_id=unique_id,
                                    start_logits=to_list(outputs[0][i]),
@@ -472,14 +464,13 @@ def load_and_cache_examples(args, tokenizer, mode="train", output_examples=False
     :return: (torch.utils.data.dataset.TensorDataset, list[NqExample], list[InputFeatures]), if output_examples is True
             torch.utils.data.dataset.TensorDataset, if output_examples is False
     """
-    assert mode in ['train', 'dev', 'pred'], "mode must be one of train, dev, pred"
-    evaluate = (mode != "train")
-    if args.local_rank not in [-1, 0] and not evaluate:
+    assert mode in ["train", "dev", "pred"], "mode must be one of train, dev, pred"
+    if args.local_rank not in [-1, 0] and (mode == "train"):
         torch.distributed.barrier()  # Make sure only the first process in distributed training process the dataset, and the others will use the cache
 
     # Load data features from cache or dataset file
-    input_file = args.predict_file if evaluate else args.train_file
-    cached_features_example_file = os.path.join(os.path.dirname(input_file), 'cached_{}_{}_{}'.format(
+    input_file = args.train_file if (mode == "train") else args.predict_file
+    cached_features_example_file = os.path.join(os.path.dirname(input_file), "cached_{}_{}_{}".format(
         mode,
         list(filter(None, args.model_name_or_path.split('/'))).pop(),
         str(args.max_seq_length)))
@@ -489,10 +480,10 @@ def load_and_cache_examples(args, tokenizer, mode="train", output_examples=False
     else:
         logger.info("Creating features and examples from dataset file at %s", input_file)
         examples = read_nq_examples(input_file=input_file,
-                                    is_training=not evaluate, args=args)
+                                    is_training=(mode != "pred"), args=args)
         num_spans_to_ids, features = convert_examples_to_features(examples=examples,
                                                                   tokenizer=tokenizer,
-                                                                  is_training=not evaluate,
+                                                                  is_training=(mode != "pred"),
                                                                   args=args)
         for spans, ids in num_spans_to_ids.items():
             logger.info("Num split into %d = %d" % (spans, len(ids)))
@@ -751,6 +742,7 @@ def main():
     # Evaluation - we can ask to evaluate all the checkpoints (sub-directories) in a directory
     results = {}
     if args.do_eval and args.local_rank in [-1, 0]:
+        args.include_unknowns = 1.0
         checkpoints = [args.output_dir]
         if args.eval_all_checkpoints:
             checkpoints = list(

@@ -824,7 +824,7 @@ def compute_predictions(example, n_best_size=10, max_answer_length=30):
         indexes = np.array(list(np.broadcast(start_indexes[None], end_indexes[:, None])))
         # filter out combinations satisfy: start < end and (end - start) < max_answer_length
         indexes = indexes[(indexes[:, 0] < indexes[:, 1]) * (indexes[:, 1] - indexes[:, 0] < max_answer_length)]
-        for i, (start_index, end_index) in enumerate(indexes):
+        for start_index, end_index in indexes:
             summary = ScoreSummary()
             summary.short_span_score = (
                     result["start_logits"][start_index] +
@@ -837,14 +837,14 @@ def compute_predictions(example, n_best_size=10, max_answer_length=30):
 
             # Span logits minus the cls logits seems to be close to the best.
             score = summary.short_span_score - summary.cls_token_score
-            predictions.append((score, i, summary, start_span, end_span))
+            predictions.append((score, summary, start_span, end_span))
 
     short_span = Span(-1, -1)
     long_span = Span(-1, -1)
     score = 0
     summary = ScoreSummary()
     if predictions:
-        score, _, summary, start_span, end_span = sorted(predictions, reverse=True)[0]
+        score, summary, start_span, end_span = sorted(predictions, key=lambda x: x[0], reverse=True)[0]
         short_span = Span(start_span, end_span)
         for c in example.candidates:
             start = short_span.start_token_idx
@@ -864,19 +864,19 @@ def compute_predictions(example, n_best_size=10, max_answer_length=30):
     summary.predicted_label = {
         "example_id": int(example.example_id),
         "long_answer": {
-            "start_token": int(long_span.start_token_idx),
-            "end_token": int(long_span.end_token_idx),
+            "start_token": int(long_span.start_token_idx) if yes_no_answer == "NONE" else -1,
+            "end_token": int(long_span.end_token_idx) if yes_no_answer == "NONE" else -1,
             "start_byte": -1,
             "end_byte": -1
         },
         "long_answer_score": float(score),
         "short_answers": [{
-            "start_token": int(short_span.start_token_idx),
-            "end_token": int(short_span.end_token_idx),
+            "start_token": int(short_span.start_token_idx) if yes_no_answer == "NONE" else -1,
+            "end_token": int(short_span.end_token_idx) if yes_no_answer == "NONE" else -1,
             "start_byte": -1,
             "end_byte": -1
         }],
-        "short_answer_score": float(score),
+        "short_answers_score": float(score),
         "yes_no_answer": yes_no_answer,
         "answer_type_logits": summary.answer_type_logits.tolist(),
         "answer_type": answer_type
