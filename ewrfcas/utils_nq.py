@@ -825,11 +825,8 @@ def compute_predictions(example, n_best_size=10, max_answer_length=30):
         indexes = indexes[(indexes[:, 0] < indexes[:, 1]) * (indexes[:, 1] - indexes[:, 0] < max_answer_length)]
         for start_index, end_index in indexes:
             summary = ScoreSummary()
-            summary.short_span_score = (
-                    result["start_logits"][start_index] +
-                    result["end_logits"][end_index])
-            summary.cls_token_score = (
-                    result["start_logits"][0] + result["end_logits"][0])
+            summary.short_span_score = (result["start_logits"][start_index] + result["end_logits"][end_index])
+            summary.cls_token_score = (result["start_logits"][0] + result["end_logits"][0])
             summary.answer_type_logits = result["answer_type_logits"] - np.array(result["answer_type_logits"]).mean()
             start_span = token_map[start_index]
             end_span = token_map[end_index] + 1
@@ -860,18 +857,41 @@ def compute_predictions(example, n_best_size=10, max_answer_length=30):
     else:
         yes_no_answer = "NONE"
 
+    # summary.predicted_label = {
+    #     "example_id": int(example.example_id),
+    #     "long_answer": {
+    #         "start_token": int(long_span.start_token_idx) if yes_no_answer == "NONE" else -1,
+    #         "end_token": int(long_span.end_token_idx) if yes_no_answer == "NONE" else -1,
+    #         "start_byte": -1,
+    #         "end_byte": -1
+    #     },
+    #     "long_answer_score": float(score),
+    #     "short_answers": [{
+    #         "start_token": int(short_span.start_token_idx) if yes_no_answer == "NONE" else -1,
+    #         "end_token": int(short_span.end_token_idx) if yes_no_answer == "NONE" else -1,
+    #         "start_byte": -1,
+    #         "end_byte": -1
+    #     }],
+    #     "short_answers_score": float(score),
+    #     "yes_no_answer": yes_no_answer,
+    #     "answer_type_logits": summary.answer_type_logits.tolist(),
+    #     "answer_type": answer_type
+    # }
+
     summary.predicted_label = {
         "example_id": int(example.example_id),
         "long_answer": {
-            "start_token": int(long_span.start_token_idx) if yes_no_answer == "NONE" else -1,
-            "end_token": int(long_span.end_token_idx) if yes_no_answer == "NONE" else -1,
+            "start_token": int(long_span.start_token_idx) if answer_type != AnswerType.UNKNOWN else -1,
+            "end_token": int(long_span.end_token_idx) if answer_type != AnswerType.UNKNOWN else -1,
             "start_byte": -1,
             "end_byte": -1
         },
         "long_answer_score": float(score),
         "short_answers": [{
-            "start_token": int(short_span.start_token_idx) if yes_no_answer == "NONE" else -1,
-            "end_token": int(short_span.end_token_idx) if yes_no_answer == "NONE" else -1,
+            "start_token": int(
+                short_span.start_token_idx) if answer_type == AnswerType.SHORT else -1,
+            "end_token": int(
+                short_span.end_token_idx) if answer_type == AnswerType.SHORT else -1,
             "start_byte": -1,
             "end_byte": -1
         }],
@@ -880,6 +900,7 @@ def compute_predictions(example, n_best_size=10, max_answer_length=30):
         "answer_type_logits": summary.answer_type_logits.tolist(),
         "answer_type": answer_type
     }
+
     return summary
 
 

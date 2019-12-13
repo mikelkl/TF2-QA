@@ -12,6 +12,9 @@ import utils_nq as utils_nq
 from nq_eval import get_metrics_as_dict
 from utils_nq import read_candidates_from_one_split, compute_pred_dict
 
+RawResult = collections.namedtuple(
+        "RawResult",
+        ["unique_id", "start_logits", "end_logits", "answer_type_logits"])
 
 def load_and_cache_examples(cached_features_example_file, output_examples=False, evaluate=False):
     features, examples = torch.load(cached_features_example_file)
@@ -55,70 +58,70 @@ if __name__ == '__main__':
     args.bert_config_file = os.path.join(args.output_dir, 'config.json')
     args.init_restore_dir = os.path.join(args.output_dir, 'pytorch_model.bin')
 
-    os.environ["CUDA_VISIBLE_DEVICES"] = args.gpu_ids
-    device = torch.device("cuda")
-    n_gpu = torch.cuda.device_count()
-    print("device %s n_gpu %d" % (device, n_gpu))
-    print("device: {} n_gpu: {} 16-bits training: {}".format(device, n_gpu, args.float16))
-
-    bert_config = BertConfig.from_json_file(args.bert_config_file)
-    model = BertJointForNQ(bert_config)
-    utils.torch_show_all_params(model)
-    utils.torch_init_model(model, args.init_restore_dir)
-    if args.float16:
-        model.half()
-    model.to(device)
-    if n_gpu > 1:
-        model = torch.nn.DataParallel(model)
+    # os.environ["CUDA_VISIBLE_DEVICES"] = args.gpu_ids
+    # device = torch.device("cuda")
+    # n_gpu = torch.cuda.device_count()
+    # print("device %s n_gpu %d" % (device, n_gpu))
+    # print("device: {} n_gpu: {} 16-bits training: {}".format(device, n_gpu, args.float16))
+    #
+    # bert_config = BertConfig.from_json_file(args.bert_config_file)
+    # model = BertJointForNQ(bert_config)
+    # utils.torch_show_all_params(model)
+    # utils.torch_init_model(model, args.init_restore_dir)
+    # if args.float16:
+    #     model.half()
+    # model.to(device)
+    # if n_gpu > 1:
+    #     model = torch.nn.DataParallel(model)
 
     dataset, examples, features = load_and_cache_examples(cached_features_example_file=args.cached_file,
                                                           output_examples=True, evaluate=True)
 
-    eval_sampler = SequentialSampler(dataset)
-    eval_dataloader = DataLoader(dataset, sampler=eval_sampler, batch_size=args.eval_batch_size)
-
-    # Eval!
-    print("***** Running evaluation *****")
-    print("  Num examples =", len(dataset))
-    print("  Batch size =", args.eval_batch_size)
-    RawResult = collections.namedtuple(
-        "RawResult",
-        ["unique_id", "start_logits", "end_logits", "answer_type_logits"])
-
-    all_results = []
-    for batch in tqdm(eval_dataloader, desc="Evaluating"):
-        model.eval()
-        batch = tuple(t.to(device) for t in batch)
-        with torch.no_grad():
-            input_ids, input_mask, segment_ids, example_indices = batch
-            inputs = {'input_ids': input_ids,
-                      'attention_mask': input_mask,
-                      'token_type_ids': segment_ids}
-            outputs = model(**inputs)
-
-        for i, example_index in enumerate(example_indices):
-            eval_feature = features[example_index.item()]
-            unique_id = int(eval_feature.unique_id)
-            result = RawResult(unique_id=unique_id,
-                               start_logits=to_list(outputs[0][i]),
-                               end_logits=to_list(outputs[1][i]),
-                               answer_type_logits=to_list(outputs[2][i]))
-            all_results.append(result)
-
-    pickle.dump(all_results, open(os.path.join(args.output_dir, 'RawResults.pkl'), 'wb'))
-
-    # print("Going to candidates file")
-    # candidates_dict = read_candidates_from_one_split(args.predict_file)
+    # eval_sampler = SequentialSampler(dataset)
+    # eval_dataloader = DataLoader(dataset, sampler=eval_sampler, batch_size=args.eval_batch_size)
     #
-    # print("Compute_pred_dict")
-    # nq_pred_dict = compute_pred_dict(candidates_dict, features,
-    #                                  [r._asdict() for r in all_results],
-    #                                  args.n_best_size, args.max_answer_length)
+    # # Eval!
+    # print("***** Running evaluation *****")
+    # print("  Num examples =", len(dataset))
+    # print("  Batch size =", args.eval_batch_size)
     #
-    # output_prediction_file = os.path.join(args.output_dir, 'predictions.json')
-    # print("Saving predictions to", output_prediction_file)
-    # with open(output_prediction_file, 'w') as f:
-    #     json.dump({'predictions': list(nq_pred_dict.values())}, f)
+    # all_results = []
+    # for batch in tqdm(eval_dataloader, desc="Evaluating"):
+    #     model.eval()
+    #     batch = tuple(t.to(device) for t in batch)
+    #     with torch.no_grad():
+    #         input_ids, input_mask, segment_ids, example_indices = batch
+    #         inputs = {'input_ids': input_ids,
+    #                   'attention_mask': input_mask,
+    #                   'token_type_ids': segment_ids}
+    #         outputs = model(**inputs)
     #
-    # print("Computing f1 score")
-    # results = get_metrics_as_dict(args.predict_file, output_prediction_file)
+    #     for i, example_index in enumerate(example_indices):
+    #         eval_feature = features[example_index.item()]
+    #         unique_id = int(eval_feature.unique_id)
+    #         result = RawResult(unique_id=unique_id,
+    #                            start_logits=to_list(outputs[0][i]),
+    #                            end_logits=to_list(outputs[1][i]),
+    #                            answer_type_logits=to_list(outputs[2][i]))
+    #         all_results.append(result)
+    #
+    # pickle.dump(all_results, open(os.path.join(args.output_dir, 'RawResults.pkl'), 'wb'))
+
+    all_results = pickle.load(open(os.path.join(args.output_dir, 'RawResults.pkl'), 'rb'))
+
+    print("Going to candidates file")
+    candidates_dict = read_candidates_from_one_split(args.predict_file)
+
+    print("Compute_pred_dict")
+    nq_pred_dict = compute_pred_dict(candidates_dict, features,
+                                     [r._asdict() for r in all_results],
+                                     args.n_best_size, args.max_answer_length)
+
+    output_prediction_file = os.path.join(args.output_dir, 'predictions.json')
+    print("Saving predictions to", output_prediction_file)
+    with open(output_prediction_file, 'w') as f:
+        json.dump({'predictions': list(nq_pred_dict.values())}, f)
+
+    print("Computing f1 score")
+    results = get_metrics_as_dict(args.predict_file, output_prediction_file)
+    print(results)

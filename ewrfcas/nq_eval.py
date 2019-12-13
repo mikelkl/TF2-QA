@@ -214,7 +214,6 @@ def score_answers(gold_annotation_dict, pred_dict):
 
     long_answer_stats = []
     short_answer_stats = []
-
     for example_id in gold_id_set:
         gold = gold_annotation_dict[example_id]
         pred = pred_dict[example_id]
