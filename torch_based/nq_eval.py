@@ -378,11 +378,17 @@ def get_metrics_with_answer_stats(long_answer_stats, short_answer_stats):
         """Compute all metrics for a set of answer statistics."""
         tp = fp = fn = 0.
         for has_gold, has_pred, is_correct, _ in answer_stats:
+            # !!!!!!!!!!!!!
+            # is_correct is False as long as gold is null span
             if has_gold and is_correct:
+                # TP = the predicted indices match one of the possible ground truth indices
                 tp += 1
             elif has_pred and not is_correct:
+                # FP = the predicted indices do NOT match one of the possible ground truth indices,
+                # OR a prediction has been made where no ground truth exists
                 fp += 1
-            elif not has_pred and not is_correct:
+            elif not has_pred and has_gold:
+                # FN = no prediction has been made where a ground truth exists
                 fn += 1
 
         f1 = safe_divide(2 * tp, 2 * tp + fp + fn)
