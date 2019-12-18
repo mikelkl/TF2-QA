@@ -13,8 +13,9 @@ from nq_eval import get_metrics_as_dict
 from utils_nq import read_candidates_from_one_split, compute_pred_dict
 
 RawResult = collections.namedtuple(
-        "RawResult",
-        ["unique_id", "start_logits", "end_logits", "answer_type_logits"])
+    "RawResult",
+    ["unique_id", "start_logits", "end_logits", "answer_type_logits"])
+
 
 def load_and_cache_examples(cached_features_example_file, output_examples=False, evaluate=False):
     features, examples = torch.load(cached_features_example_file)
@@ -124,4 +125,4 @@ if __name__ == '__main__':
 
     print("Computing f1 score")
     results = get_metrics_as_dict(args.predict_file, output_prediction_file)
-    print(results)
+    print(json.dumps(results, indent=2))

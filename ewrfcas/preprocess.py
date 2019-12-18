@@ -10,6 +10,7 @@ import transformers.tokenization_bert as tokenization
 import enum
 import random
 import re
+import torch
 import numpy as np
 
 logger = logging.getLogger(__name__)
@@ -578,7 +579,7 @@ def convert_single_example(example, tokenizer, is_training, args):
 
     # QUERY
     query_tokens = []
-    query_tokens.append("[Q]") # TODO:为啥加这个....?
+    query_tokens.append("[Q]")
     query_tokens.extend(tokenize(tokenizer, example.questions[-1]))
     if len(query_tokens) > args.max_query_length:
         query_tokens = query_tokens[-args.max_query_length:]
@@ -772,43 +773,40 @@ if __name__ == '__main__':
                         help="Maximum context position for which to generate special tokens.")
     parser.add_argument("--skip_nested_contexts", type=bool, default=True,
                         help="Completely ignore context that are not top level nodes in the page.")
+    parser.add_argument("--tfidf_select", type=bool, default=True, help="Whether to use tfidf to select paragraphs")
+    parser.add_argument("--tfidf_train_file", type=str, default='dataset/train_cand_selected_600.json')
+    parser.add_argument("--tfidf_dev_file", type=str, default=None)
+    parser.add_argument("--tfidf_test_file", type=str, default=None)
 
     args = parser.parse_args()
-    tokenizer = FullTokenizer('../self_training_squad/pretrained_model/wwm_uncased_L-24_H-1024_A-16/vocab.txt',
+    tokenizer = FullTokenizer('check_points/bert-large-wwm-finetuned-squad/vocab.txt',
                               do_lower_case=True)
 
-    # # train preprocess
-    # output_file = 'train_data_maxlen{}.pkl'.format(args.max_seq_length)
-    # example_output_file = os.path.join(args.output_dir, output_file.replace('data', 'example'))
-    # feature_output_file = os.path.join(args.output_dir, output_file.replace('data', 'feature'))
-    # examples = read_nq_examples(input_file=args.train_file, is_training=True, args=args)
-    # pickle.dump(examples, open(example_output_file, 'wb'))
+    # train preprocess
+    output_file = os.path.join(args.output_dir, 'train_data_maxlen{}.bin'.format(args.max_seq_length))
+    examples = read_nq_examples(input_file=args.train_file, is_training=True, args=args)
+    num_spans_to_ids, features = convert_examples_to_features(examples=examples, tokenizer=tokenizer,
+                                                              is_training=True, args=args)
+    torch.save((features, examples), output_file)
+    for spans, ids in num_spans_to_ids.items():
+        print("Num split into {} = {}".format(spans, len(ids)))
+    #
+    # # dev preprocess
+    # output_file = os.path.join(args.output_dir, 'dev_data_maxlen{}.bin'.format(args.max_seq_length))
+    # examples = read_nq_examples(input_file=args.dev_file, is_training=False, args=args)
     # num_spans_to_ids, features = convert_examples_to_features(examples=examples, tokenizer=tokenizer,
-    #                                                           is_training=True, args=args)
-    # pickle.dump(features, open(feature_output_file, 'wb'))
+    #                                                           is_training=False, args=args)
+    # torch.save((features, examples), output_file)
     # for spans, ids in num_spans_to_ids.items():
     #     print("Num split into {} = {}".format(spans, len(ids)))
 
-    # dev preprocess
-    output_file = 'dev_data_maxlen{}.pkl'.format(args.max_seq_length)
-    example_output_file = os.path.join(args.output_dir, output_file.replace('data', 'example'))
-    feature_output_file = os.path.join(args.output_dir, output_file.replace('data', 'feature'))
-    examples = read_nq_examples(input_file=args.dev_file, is_training=False, args=args)
-    pickle.dump(examples, open(example_output_file, 'wb'))
-    num_spans_to_ids, features = convert_examples_to_features(examples=examples, tokenizer=tokenizer,
-                                                              is_training=False, args=args)
-    pickle.dump(features, open(feature_output_file, 'wb'))
-    for spans, ids in num_spans_to_ids.items():
-        print("Num split into {} = {}".format(spans, len(ids)))
-
     # # test preprocess
-    # output_file = 'test_data_maxlen{}.pkl'.format(args.max_seq_length)
-    # example_output_file = os.path.join(args.output_dir, output_file.replace('data', 'example'))
-    # feature_output_file = os.path.join(args.output_dir, output_file.replace('data', 'feature'))
+    # output_file = os.path.join(args.output_dir, 'test_data_maxlen{}.bin'.format(args.max_seq_length))
     # examples = read_nq_examples(input_file=args.test_file, is_training=False, args=args)
-    # pickle.dump(examples, open(example_output_file, 'wb'))
     # num_spans_to_ids, features = convert_examples_to_features(examples=examples, tokenizer=tokenizer,
     #                                                           is_training=False, args=args)
-    # pickle.dump(features, open(feature_output_file, 'wb'))
-    # for spans, ids in num_spans_to_ids.items():
+    # torch.save((features, examples), output_file)
+    # num_spans_to_ids = num_spans_to_ids.items()
+    # num_spans_to_ids = sorted(num_spans_to_ids)
+    # for spans, ids in num_spans_to_ids:
     #     print("Num split into {} = {}".format(spans, len(ids)))
