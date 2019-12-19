@@ -366,8 +366,10 @@ def make_submission(output_prediction_file, output_dir):
         :param entry: dict
         :return: str
         """
-        # if entry["short_answers_score"] < 1.5:
-        #     return ""
+        if entry['answer_type'] == 0:
+            return ""
+        if entry["short_answers_score"] < 1.5:
+            return ""
 
         if entry["yes_no_answer"] != "NONE":
             return entry["yes_no_answer"]
@@ -379,15 +381,17 @@ def make_submission(output_prediction_file, output_dir):
         return " ".join(answer)
 
     def create_long_answer(entry):
-        # if entry["long_answer_score"] < 1.5:
-        # return ""
+        if entry['answer_type'] == 0:
+            return ''
+        if entry["long_answer_score"] < 1.5:
+            return ""
 
         answer = []
         if entry["long_answer"]["start_token"] > -1:
             answer.append(str(entry["long_answer"]["start_token"]) + ":" + str(entry["long_answer"]["end_token"]))
         return " ".join(answer)
 
-    for var_name in ['long_answer_score', 'short_answer_score', 'answer_type']:
+    for var_name in ['long_answer_score', 'short_answers_score', 'answer_type']:
         test_answers_df[var_name] = test_answers_df['predictions'].apply(lambda q: q[var_name])
 
     test_answers_df["long_answer"] = test_answers_df["predictions"].apply(create_long_answer)
@@ -635,7 +639,10 @@ def main():
     parser.add_argument("--output_prediction_file", type=str, default=None,
                         help="Where to print predictions in NQ prediction format, to be passed to"
                              "natural_questions.nq_eval.")
+    parser.add_argument("--gpu_ids", default="4,5,6,7", type=str)
     args = parser.parse_args()
+
+    os.environ["CUDA_VISIBLE_DEVICES"] = args.gpu_ids
 
     if os.path.exists(args.output_dir) and os.listdir(
             args.output_dir) and args.do_train and not args.overwrite_output_dir:
@@ -761,6 +768,7 @@ def main():
             result = evaluate(args, model, tokenizer, prefix=global_step)
 
             result = dict((k + ('_{}'.format(global_step) if global_step else ''), v) for k, v in result.items())
+            logger.info(result)
             results.update(result)
 
     logger.info("Results: {}".format(results))
@@ -777,3 +785,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+    # make_submission("../output/models/bert-large-uncased-whole-word-masking-finetuned-squad/predictions_12192019.json", "../output/models/bert-large-uncased-whole-word-masking-finetuned-squad/")

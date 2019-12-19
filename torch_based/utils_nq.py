@@ -864,15 +864,15 @@ def compute_predictions(example, n_best_size=10, max_answer_length=30):
     summary.predicted_label = {
         "example_id": int(example.example_id),
         "long_answer": {
-            "start_token": int(long_span.start_token_idx) if yes_no_answer == "NONE" else -1,
-            "end_token": int(long_span.end_token_idx) if yes_no_answer == "NONE" else -1,
+            "start_token": int(long_span.start_token_idx) if answer_type != AnswerType.UNKNOWN else -1,
+            "end_token": int(long_span.end_token_idx) if answer_type != AnswerType.UNKNOWN else -1,
             "start_byte": -1,
             "end_byte": -1
         },
         "long_answer_score": float(score),
         "short_answers": [{
-            "start_token": int(short_span.start_token_idx) if yes_no_answer == "NONE" else -1,
-            "end_token": int(short_span.end_token_idx) if yes_no_answer == "NONE" else -1,
+            "start_token": int(short_span.start_token_idx) if answer_type == AnswerType.SHORT else -1,
+            "end_token": int(short_span.end_token_idx) if answer_type == AnswerType.SHORT else -1,
             "start_byte": -1,
             "end_byte": -1
         }],

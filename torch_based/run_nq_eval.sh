@@ -1,13 +1,1 @@
-CUDA_VISIBLE_DEVICES=7 python run_nq.py --model_type=bert \
-  --model_name_or_path=../output/models/bert-large-uncased-whole-word-masking-finetuned-squad/pytorch_model.bin \
-  --config_name=../output/models/bert-large-uncased-whole-word-masking-finetuned-squad/config.json \
-  --tokenizer_name=../output/models/bert-large-uncased-whole-word-masking-finetuned-squad/vocab.txt \
-  --do_eval \
-  --do_lower_case \
-  --fp16 \
-  --max_seq_length=512 \
-  --output_dir=../output/models/bert-large-uncased-whole-word-masking-finetuned-squad/ \
-  --per_gpu_eval_batch_size=28 \
-  --overwrite_output_dir \
-  --predict_file=../input/tensorflow2-question-answering/simplified-nq-dev.jsonl \
-  --output_prediction_file=../output/models/bert-large-uncased-whole-word-masking-finetuned-squad/dev_predictions.json
+python run_nq.py --model_type=bert --model_name_or_path=../output/models/bert-large-uncased-whole-word-masking-finetuned-squad/pytorch_model.bin --config_name=../output/models/bert-large-uncased-whole-word-masking-finetuned-squad/config.json --tokenizer_name=../output/models/bert-large-uncased-whole-word-masking-finetuned-squad/vocab.txt --do_eval --do_lower_case --fp16 --max_seq_length=512 --output_dir=../output/models/bert-large-uncased-whole-word-masking-finetuned-squad/ --per_gpu_eval_batch_size=200 --overwrite_output_dir --predict_file=../input/tensorflow2-question-answering/simplified-nq-dev.jsonl --output_prediction_file=../output/models/bert-large-uncased-whole-word-masking-finetuned-squad/dev_predictions.json --gpu_ids 1 --eval_all_checkpoints
