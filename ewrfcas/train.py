@@ -114,7 +114,7 @@ def to_list(tensor):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument("--gpu_ids", default="0,1,2,3,4,5,6,7", type=str)
-    parser.add_argument("--train_epochs", default=3, type=int)
+    parser.add_argument("--train_epochs", default=2, type=int)
     parser.add_argument("--train_batch_size", default=48, type=int)
     parser.add_argument("--eval_batch_size", default=128, type=int)
     parser.add_argument("--n_best_size", default=20, type=int)

@@ -110,8 +110,8 @@ if __name__ == '__main__':
     parser.add_argument("--float16", default=True, type=bool)
 
     parser.add_argument("--bert_config_file", default='check_points/bert-large-wwm-finetuned-squad', type=str)
-    parser.add_argument("--init_restore_dir", default='check_points/bert-large-tfidf-600-top8-V0', type=str)
-    parser.add_argument("--output_dir", default='check_points/bert-large-tfidf-600-top8-V0', type=str)
+    parser.add_argument("--init_restore_dir", default='check_points/bert-large-wwm-finetuned-squad/checkpoint-41224', type=str)
+    parser.add_argument("--output_dir", default='check_points/bert-large-wwm-finetuned-squad/checkpoint-41224', type=str)
     parser.add_argument("--log_file", default='log.txt', type=str)
 
     parser.add_argument("--predict_file", default='data/simplified-nq-dev.jsonl', type=str)
