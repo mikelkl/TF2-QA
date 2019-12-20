@@ -431,9 +431,11 @@ def read_nq_examples(input_file, is_training, args):
     with open(input_file, "r") as f:
         for index, line in tqdm(enumerate(f)):
             input_data.append(create_example_from_jsonl(line, args))
+            if len(input_data) > 100:
+                break
 
     examples = []
-    for entry in input_data:
+    for entry in tqdm(input_data):
         examples.extend(read_nq_entry(entry, is_training))
     return examples
 
@@ -773,17 +775,16 @@ if __name__ == '__main__':
                         help="Maximum context position for which to generate special tokens.")
     parser.add_argument("--skip_nested_contexts", type=bool, default=True,
                         help="Completely ignore context that are not top level nodes in the page.")
-    parser.add_argument("--tfidf_select", type=bool, default=True, help="Whether to use tfidf to select paragraphs")
-    parser.add_argument("--tfidf_train_file", type=str, default='dataset/train_cand_selected_600.json')
-    parser.add_argument("--tfidf_dev_file", type=str, default=None)
-    parser.add_argument("--tfidf_test_file", type=str, default=None)
 
     args = parser.parse_args()
     tokenizer = FullTokenizer('check_points/bert-large-wwm-finetuned-squad/vocab.txt',
                               do_lower_case=True)
 
     # train preprocess
+    import ipdb
+
     output_file = os.path.join(args.output_dir, 'train_data_maxlen{}.bin'.format(args.max_seq_length))
+    ipdb.set_trace()
     examples = read_nq_examples(input_file=args.train_file, is_training=True, args=args)
     num_spans_to_ids, features = convert_examples_to_features(examples=examples, tokenizer=tokenizer,
                                                               is_training=True, args=args)
