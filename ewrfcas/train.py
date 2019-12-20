@@ -62,20 +62,15 @@ def evaluate(model, args, dev_features, device, global_steps):
     pickle.dump(all_results, open(os.path.join(args.output_dir, 'RawResults.pkl'), 'wb'))
     # all_results = pickle.load(open(os.path.join(args.output_dir, 'RawResults.pkl'), 'rb'))
 
-    # print("Going to candidates file")
     candidates_dict = read_candidates_from_one_split(args.predict_file)
-
-    # print("Compute_pred_dict")
     nq_pred_dict = compute_pred_dict(candidates_dict, dev_features,
                                      [r._asdict() for r in all_results],
                                      args.n_best_size, args.max_answer_length)
 
     output_prediction_file = os.path.join(args.output_dir, 'predictions' + str(global_steps) + '.json')
-    # print("Saving predictions to", output_prediction_file)
     with open(output_prediction_file, 'w') as f:
         json.dump({'predictions': list(nq_pred_dict.values())}, f)
 
-    # print("Computing f1 score")
     results = get_metrics_as_dict(args.predict_file, output_prediction_file)
     print('Steps:{}'.format(global_steps))
     print(json.dumps(results, indent=2))
@@ -124,7 +119,7 @@ if __name__ == '__main__':
     parser.add_argument('--lr', type=float, default=3e-5)
     parser.add_argument('--dropout', type=float, default=0.1)
     parser.add_argument('--clip_norm', type=float, default=1.0)
-    parser.add_argument('--warmup_rate', type=float, default=0.06)
+    parser.add_argument('--warmup_rate', type=float, default=0.1)
     parser.add_argument("--schedule", default='warmup_linear', type=str, help='schedule')
     parser.add_argument("--weight_decay_rate", default=0.01, type=float, help='weight_decay_rate')
     parser.add_argument("--float16", default=True, type=bool)

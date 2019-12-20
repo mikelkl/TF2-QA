@@ -10,8 +10,6 @@ import collections
 import pickle
 import pandas as pd
 from preprocess import InputFeatures, NqExample
-import utils_nq as utils_nq
-from nq_eval import get_metrics_as_dict
 from utils_nq import read_candidates_from_one_split, compute_pred_dict
 
 RawResult = collections.namedtuple(
@@ -19,8 +17,8 @@ RawResult = collections.namedtuple(
     ["unique_id", "start_logits", "end_logits", "answer_type_logits"])
 
 
-def load_and_cache_examples(cached_features_example_file, output_examples=False, evaluate=False):
-    features, examples = torch.load(cached_features_example_file)
+def load_and_cache_examples(cached_features_example_file, output_features=False, evaluate=False):
+    features = torch.load(cached_features_example_file)
 
     # Convert to Tensors and build dataset
     all_input_ids = torch.tensor([f.input_ids for f in features], dtype=torch.long)
@@ -34,8 +32,8 @@ def load_and_cache_examples(cached_features_example_file, output_examples=False,
         all_end_positions = torch.tensor([f.end_position for f in features], dtype=torch.long)
         dataset = TensorDataset(all_input_ids, all_input_mask, all_segment_ids, all_start_positions, all_end_positions)
 
-    if output_examples:
-        return dataset, examples, features
+    if output_features:
+        return dataset, features
     return dataset
 
 
@@ -106,7 +104,7 @@ def make_submission(output_prediction_file, output_dir):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument("--gpu_ids", default="4,5,6,7", type=str)
+    parser.add_argument("--gpu_ids", default="0,1,2,3,4,5,6,7", type=str)
     parser.add_argument("--eval_batch_size", default=128, type=int)
     parser.add_argument("--n_best_size", default=20, type=int)
     parser.add_argument("--max_answer_length", default=30, type=int)
@@ -116,11 +114,11 @@ if __name__ == '__main__':
     parser.add_argument("--predict_file", default='data/simplified-nq-test.jsonl', type=str)
     parser.add_argument("--output_dir", default='check_points/bert-large-wwm-finetuned-squad/checkpoint-41224',
                         type=str)
-    parser.add_argument("--cached_file", default='dataset/test_data_maxlen512.bin',
+    parser.add_argument("--predict_feat", default='dataset/test_data_maxlen512_tfidf_features.bin',
                         type=str)
     args = parser.parse_args()
     args.bert_config_file = os.path.join(args.output_dir, 'config.json')
-    args.init_restore_dir = os.path.join(args.output_dir, 'pytorch_model.bin')
+    args.init_restore_dir = os.path.join(args.output_dir, 'best_checkpoint.pth')
 
     os.environ["CUDA_VISIBLE_DEVICES"] = args.gpu_ids
     device = torch.device("cuda")
@@ -138,8 +136,8 @@ if __name__ == '__main__':
     if n_gpu > 1:
         model = torch.nn.DataParallel(model)
 
-    dataset, examples, features = load_and_cache_examples(cached_features_example_file=args.cached_file,
-                                                          output_examples=True, evaluate=True)
+    dataset, features = load_and_cache_examples(cached_features_example_file=args.predict_feat,
+                                                output_features=True, evaluate=True)
 
     eval_sampler = SequentialSampler(dataset)
     eval_dataloader = DataLoader(dataset, sampler=eval_sampler, batch_size=args.eval_batch_size)
@@ -162,7 +160,7 @@ if __name__ == '__main__':
 
         for i, example_index in enumerate(example_indices):
             eval_feature = features[example_index.item()]
-            unique_id = int(eval_feature.unique_id)
+            unique_id = str(eval_feature.unique_id)
             result = RawResult(unique_id=unique_id,
                                start_logits=to_list(outputs[0][i]),
                                end_logits=to_list(outputs[1][i]),

@@ -577,25 +577,37 @@ if __name__ == '__main__':
     random.seed(args.seed)
     tokenizer = FullTokenizer('check_points/bert-large-wwm-finetuned-squad/vocab.txt', do_lower_case=True)
 
-    # train preprocess
-    example_output_file = os.path.join(args.output_dir,
-                                       'train_data_maxlen{}_tfidf_examples.json'.format(args.max_seq_length))
-    feature_output_file = os.path.join(args.output_dir,
-                                       'train_data_maxlen{}_tfidf_features.bin'.format(args.max_seq_length))
-    tfidf_dict = json.load(open(args.tfidf_train_file))
-    examples = read_nq_examples(input_file=args.train_file, tfidf_dict=tfidf_dict, is_training=True, args=args)
-    with open(example_output_file, 'w') as w:
-        json.dump(examples, w)
-    features = convert_examples_to_features(examples=examples, tokenizer=tokenizer, is_training=True, args=args)
-    torch.save(features, feature_output_file)
+    # # train preprocess
+    # example_output_file = os.path.join(args.output_dir,
+    #                                    'train_data_maxlen{}_tfidf_examples.json'.format(args.max_seq_length))
+    # feature_output_file = os.path.join(args.output_dir,
+    #                                    'train_data_maxlen{}_tfidf_features.bin'.format(args.max_seq_length))
+    # tfidf_dict = json.load(open(args.tfidf_train_file))
+    # examples = read_nq_examples(input_file=args.train_file, tfidf_dict=tfidf_dict, is_training=True, args=args)
+    # with open(example_output_file, 'w') as w:
+    #     json.dump(examples, w)
+    # features = convert_examples_to_features(examples=examples, tokenizer=tokenizer, is_training=True, args=args)
+    # torch.save(features, feature_output_file)
+    #
+    # # dev preprocess
+    # example_output_file = os.path.join(args.output_dir,
+    #                                    'dev_data_maxlen{}_tfidf_examples.json'.format(args.max_seq_length))
+    # feature_output_file = os.path.join(args.output_dir,
+    #                                    'dev_data_maxlen{}_tfidf_features.bin'.format(args.max_seq_length))
+    # tfidf_dict = json.load(open(args.tfidf_dev_file))
+    # examples = read_nq_examples(input_file=args.dev_file, tfidf_dict=tfidf_dict, is_training=False, args=args)
+    # with open(example_output_file, 'w') as w:
+    #     json.dump(examples, w)
+    # features = convert_examples_to_features(examples=examples, tokenizer=tokenizer, is_training=False, args=args)
+    # torch.save(features, feature_output_file)
 
-    # dev preprocess
+    # test preprocess
     example_output_file = os.path.join(args.output_dir,
-                                       'dev_data_maxlen{}_tfidf_examples.json'.format(args.max_seq_length))
+                                       'test_data_maxlen{}_tfidf_examples.json'.format(args.max_seq_length))
     feature_output_file = os.path.join(args.output_dir,
-                                       'dev_data_maxlen{}_tfidf_features.bin'.format(args.max_seq_length))
-    tfidf_dict = json.load(open(args.tfidf_dev_file))
-    examples = read_nq_examples(input_file=args.dev_file, tfidf_dict=tfidf_dict, is_training=False, args=args)
+                                       'test_data_maxlen{}_tfidf_features.bin'.format(args.max_seq_length))
+    tfidf_dict = json.load(open(args.tfidf_test_file))
+    examples = read_nq_examples(input_file=args.test_file, tfidf_dict=tfidf_dict, is_training=False, args=args)
     with open(example_output_file, 'w') as w:
         json.dump(examples, w)
     features = convert_examples_to_features(examples=examples, tokenizer=tokenizer, is_training=False, args=args)
