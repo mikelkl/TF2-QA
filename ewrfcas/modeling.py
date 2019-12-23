@@ -731,7 +731,8 @@ class BertJointForNQ(PreTrainedBertModel):
 
         self.apply(self.init_bert_weights)
 
-    def forward(self, input_ids, attention_mask=None, token_type_ids=None, start_positions=None, end_positions=None, answer_types=None):
+    def forward(self, input_ids, attention_mask=None, token_type_ids=None,
+                start_positions=None, end_positions=None, answer_types=None):
 
         outputs = self.bert(input_ids,
                             attention_mask=attention_mask,

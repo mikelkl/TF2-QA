@@ -848,6 +848,8 @@ def compute_predictions(example, n_best_size=10, max_answer_length=30):
             if c["top_level"] and c["start_token"] <= start and c["end_token"] >= end:
                 long_span = Span(c["start_token"], c["end_token"])
                 break
+    else:
+        summary.answer_type_logits = np.array([0] * 5)
 
     answer_type = int(np.argmax(summary.answer_type_logits))
     if answer_type == AnswerType.YES:
@@ -856,27 +858,6 @@ def compute_predictions(example, n_best_size=10, max_answer_length=30):
         yes_no_answer = "NO"
     else:
         yes_no_answer = "NONE"
-
-    # summary.predicted_label = {
-    #     "example_id": int(example.example_id),
-    #     "long_answer": {
-    #         "start_token": int(long_span.start_token_idx) if yes_no_answer == "NONE" else -1,
-    #         "end_token": int(long_span.end_token_idx) if yes_no_answer == "NONE" else -1,
-    #         "start_byte": -1,
-    #         "end_byte": -1
-    #     },
-    #     "long_answer_score": float(score),
-    #     "short_answers": [{
-    #         "start_token": int(short_span.start_token_idx) if yes_no_answer == "NONE" else -1,
-    #         "end_token": int(short_span.end_token_idx) if yes_no_answer == "NONE" else -1,
-    #         "start_byte": -1,
-    #         "end_byte": -1
-    #     }],
-    #     "short_answers_score": float(score),
-    #     "yes_no_answer": yes_no_answer,
-    #     "answer_type_logits": summary.answer_type_logits.tolist(),
-    #     "answer_type": answer_type
-    # }
 
     summary.predicted_label = {
         "example_id": int(example.example_id),
@@ -917,9 +898,9 @@ def compute_pred_dict(candidates_dict, dev_features, raw_results, n_best_size=10
             ('answer_type_logits', [2.1452865600585938, ...])]))
     :return: dict{int:dict}
     """
-    examples_by_id = [(int(k), 0, v) for k, v in candidates_dict.items()]
-    raw_results_by_id = [(int(res["unique_id"]), 1, res) for res in raw_results]
-    features_by_id = [(int(d.unique_id), 2, d) for d in dev_features]
+    examples_by_id = [(str(k), 0, v) for k, v in candidates_dict.items()]
+    raw_results_by_id = [(str(res["unique_id"]), 1, res) for res in raw_results]
+    features_by_id = [(str(d.unique_id), 2, d) for d in dev_features]
 
     # Join examples with features and raw results.
     examples = []
