@@ -459,12 +459,12 @@ def convert_single_example(example, tokenizer, is_training, args):
         # 现阶段，有短答案预测短答案，否则预测长答案
         if example['answer_type'] != AnswerType['UNKNOWN']:
             tok_long_start_position = orig_to_tok_index[example['long_start']]
-            tok_long_end_position = orig_to_tok_index[example['long_end']] - 1
+            tok_long_end_position = orig_to_tok_index[example['long_end'] - 1]
             tok_start_position = tok_long_start_position
             tok_end_position = tok_long_end_position
         if example['answer_type'] == AnswerType['SHORT']:
             tok_short_start_position = orig_to_tok_index[example['short_start']]
-            tok_short_end_position = orig_to_tok_index[example['short_end']] - 1
+            tok_short_end_position = orig_to_tok_index[example['short_end'] - 1]
             tok_start_position = tok_short_start_position
             tok_end_position = tok_short_end_position
 
@@ -553,15 +553,15 @@ def convert_single_example(example, tokenizer, is_training, args):
                 end_position = tok_end_position - doc_start + doc_offset
                 answer_type = example['answer_type']
 
-                # # 如果是短答案，对一下答案是否正确
-                # if example['answer_type'] == AnswerType['SHORT']:
-                #     answer_text = " ".join(tokens[start_position:(end_position + 1)])
-                #     answer_text = answer_text.replace(' ##', '').replace('## ', '').replace('##', '')
-                #     gt_answer = example['short_answer_text'].lower()
-                #     answer_text_chars = [c for c in answer_text if c not in " \t\r\n" and ord(c) != 0x202F]
-                #     gt_answer_chars = [c for c in gt_answer if c not in " \t\r\n" and ord(c) != 0x202F]
-                #     if "".join(answer_text_chars) != "".join(gt_answer_chars):
-                #         print(answer_text, 'V.S.', gt_answer)
+                # 如果是短答案，对一下答案是否正确
+                if example['answer_type'] == AnswerType['SHORT']:
+                    answer_text = " ".join(tokens[start_position:(end_position + 1)])
+                    answer_text = answer_text.replace(' ##', '').replace('## ', '').replace('##', '')
+                    gt_answer = example['short_answer_text'].lower()
+                    answer_text_chars = [c for c in answer_text if c not in " \t\r\n" and ord(c) != 0x202F]
+                    gt_answer_chars = [c for c in gt_answer if c not in " \t\r\n" and ord(c) != 0x202F]
+                    if "".join(answer_text_chars) != "".join(gt_answer_chars):
+                        print(answer_text, 'V.S.', gt_answer)
 
         feature = InputFeatures(
             unique_id=None,
@@ -616,10 +616,10 @@ def convert_single_ls_example(example, tokenizer, is_training, args):
     if is_training:
         if example['answer_type'] != AnswerType['UNKNOWN']:
             tok_long_start_position = orig_to_tok_index[example['long_start']]
-            tok_long_end_position = orig_to_tok_index[example['long_end']] - 1
+            tok_long_end_position = orig_to_tok_index[example['long_end'] - 1]
         if example['answer_type'] == AnswerType['SHORT']:
             tok_short_start_position = orig_to_tok_index[example['short_start']]
-            tok_short_end_position = orig_to_tok_index[example['short_end']] - 1
+            tok_short_end_position = orig_to_tok_index[example['short_end'] - 1]
 
     # Get max tokens number for original doc,
     # should minus query tokens number and 3 special tokens
@@ -715,6 +715,16 @@ def convert_single_ls_example(example, tokenizer, is_training, args):
                     short_start_position = 0
                     short_end_position = 0
                 answer_type = example['answer_type']
+
+                # 如果是短答案，对一下答案是否正确
+                if example['answer_type'] == AnswerType['SHORT']:
+                    answer_text = " ".join(tokens[short_start_position:(short_end_position + 1)])
+                    answer_text = answer_text.replace(' ##', '').replace('## ', '').replace('##', '')
+                    gt_answer = example['short_answer_text'].lower()
+                    answer_text_chars = [c for c in answer_text if c not in " \t\r\n" and ord(c) != 0x202F]
+                    gt_answer_chars = [c for c in gt_answer if c not in " \t\r\n" and ord(c) != 0x202F]
+                    if "".join(answer_text_chars) != "".join(gt_answer_chars):
+                        print(answer_text, 'V.S.', gt_answer)
 
         feature = InputLSFeatures(
             unique_id=None,
