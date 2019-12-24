@@ -125,8 +125,7 @@ def score_long_answer(gold_label_list, pred_label):
     """
     gold_has_answer = util.gold_has_long_answer(gold_label_list)
 
-    pred_has_answer = pred_label and (
-        not pred_label.long_answer_span.is_null_span())
+    pred_has_answer = pred_label and (not pred_label.long_answer_span.is_null_span())
 
     is_correct = False
     score = pred_label.long_score
@@ -215,7 +214,6 @@ def score_answers(gold_annotation_dict, pred_dict):
 
     long_answer_stats = []
     short_answer_stats = []
-
     for example_id in gold_id_set:
         gold = gold_annotation_dict[example_id]
         pred = pred_dict[example_id]
@@ -365,8 +363,7 @@ def get_metrics_as_dict(gold_path, prediction_path):
 
     nq_gold_dict = util.read_simplified_annotation(gold_path)
     nq_pred_dict = util.read_prediction_json(prediction_path)
-    long_answer_stats, short_answer_stats = score_answers(
-        nq_gold_dict, nq_pred_dict)
+    long_answer_stats, short_answer_stats = score_answers(nq_gold_dict, nq_pred_dict)
 
     return get_metrics_with_answer_stats(long_answer_stats, short_answer_stats)
 
