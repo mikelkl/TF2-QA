@@ -39,21 +39,6 @@ class InputFeatures(object):
                  end_position=None,
                  answer_text="",
                  answer_type=AnswerType['SHORT']):
-        """
-        :param unique_id:
-        :param example_index:
-        :param doc_span_index:
-        :param tokens:
-        :param token_to_orig_map: map index of each token in tokens field from current sliding window to original context
-        :param token_is_max_context:
-        :param input_ids:
-        :param input_mask:
-        :param segment_ids:
-        :param start_position:
-        :param end_position:
-        :param answer_text:
-        :param answer_type:
-        """
         self.unique_id = unique_id
         self.example_index = example_index
         self.doc_span_index = doc_span_index
@@ -65,6 +50,42 @@ class InputFeatures(object):
         self.segment_ids = segment_ids
         self.start_position = start_position
         self.end_position = end_position
+        self.answer_text = answer_text
+        self.answer_type = answer_type
+
+
+class InputLSFeatures(object):
+    """A single set of features of data."""
+
+    def __init__(self,
+                 unique_id,
+                 example_index,
+                 doc_span_index,
+                 tokens,
+                 token_to_orig_map,
+                 token_is_max_context,
+                 input_ids,
+                 input_mask,
+                 segment_ids,
+                 long_start_position=None,
+                 long_end_position=None,
+                 short_start_position=None,
+                 short_end_position=None,
+                 answer_text="",
+                 answer_type=AnswerType['SHORT']):
+        self.unique_id = unique_id
+        self.example_index = example_index
+        self.doc_span_index = doc_span_index
+        self.tokens = tokens
+        self.token_to_orig_map = token_to_orig_map
+        self.token_is_max_context = token_is_max_context
+        self.input_ids = input_ids
+        self.input_mask = input_mask
+        self.segment_ids = segment_ids
+        self.long_start_position = long_start_position
+        self.long_end_position = long_end_position
+        self.short_start_position = short_start_position
+        self.short_end_position = short_end_position
         self.answer_text = answer_text
         self.answer_type = answer_type
 
@@ -172,7 +193,17 @@ def create_example(line, tfidf_dict, is_training, args):
     # tfidf并不保证所有段落必定出现在所选段落内
     if is_training:
         long_answer_cand = sample['annotations'][0]['long_answer']['candidate_index']
+
         if long_answer_cand != -1:
+            # answer_cand保证top_level是true
+            if sample['long_answer_candidates'][long_answer_cand]['top_level'] is False:
+                gt_start_token = sample['long_answer_candidates'][long_answer_cand]['start_token']
+                gt_end_token = sample['long_answer_candidates'][long_answer_cand]['end_token']
+                for il, cand in enumerate(sample['long_answer_candidates']):
+                    if cand['start_token'] <= gt_start_token and cand['end_token'] >= gt_end_token \
+                            and cand['top_level'] is True:
+                        long_answer_cand = il
+                        break
             # training的时候当tfidf中没有包含正确答案，且long_answer是存在的时候，tfidf的结果则只选目标段落
             hit_answer = False
             for pids in tfidf_cands_ids:
@@ -270,11 +301,14 @@ def create_example(line, tfidf_dict, is_training, args):
                 answer_type = AnswerType['NO']
 
             short_answers = annotation['short_answers']
+            # 这里short answer必须排序
+            short_answers = sorted(short_answers, key=lambda x: x['start_token'])
             if len(short_answers) > 0:
-                # 可能存在多个short，这里取最大并集(粗)
+                # TODO:可能存在多个short，multi-tag
                 answer_type = AnswerType['SHORT']
-                ori_short_start = short_answers[0]['start_token']
-                ori_short_end = short_answers[-1]['end_token']
+                short_ans = random.choice(short_answers)
+                ori_short_start = short_ans['start_token']
+                ori_short_end = short_ans['end_token']
                 answer_text = ori_doc_tokens[ori_short_start:ori_short_end]
                 answer_text = " ".join([at for at in answer_text if '<' not in at])
             else:
@@ -293,12 +327,18 @@ def create_example(line, tfidf_dict, is_training, args):
                   'ori_short_start': ori_short_start,
                   'ori_short_end': ori_short_end}
 
+        if answer['answer_type'] == AnswerType['SHORT'] and answer_text == "":
+            print('WRONG SHORT', answer, answer_text)
+            answer['answer_type'] = AnswerType['LONG']
+            answer['ori_short_start'] = -1
+            answer['ori_short_end'] = -1
+
     examples = []
     for p_sample in selected_ps:
         if answer and answer['answer_type'] != AnswerType['UNKNOWN']:
-            # 如果长答案在候选里，那么首位必然都在这个候选里
+            # 如果长答案在候选里，那么首位必然都在这个候选里，!!!注意这里的ori_long_end必须-1，否则可能会漏!!!
             if answer['ori_long_start'] in p_sample['map_to_origin'] \
-                    and answer['ori_long_end'] in p_sample['map_to_origin']:
+                    and answer['ori_long_end'] - 1 in p_sample['map_to_origin']:
                 final_long_start = p_sample['map_to_origin'][answer['ori_long_start']]
                 final_long_end = p_sample['map_to_origin'][answer['ori_long_end'] - 1] + 1
                 long_answer_text = " ".join(p_sample['paragraph_tokens'][final_long_start:final_long_end])
@@ -364,7 +404,10 @@ def convert_examples_to_features(examples, tokenizer, is_training, args):
     for index, example in enumerate(tqdm(examples)):
         example_index = example['example_id']
         paragraph_id = example['paragraph_id']
-        features = convert_single_example(example, tokenizer, is_training, args)
+        if args.do_ls:
+            features = convert_single_ls_example(example, tokenizer, is_training, args)
+        else:
+            features = convert_single_example(example, tokenizer, is_training, args)
 
         for feature in features:
             feature.example_index = example_index
@@ -416,12 +459,18 @@ def convert_single_example(example, tokenizer, is_training, args):
         # 现阶段，有短答案预测短答案，否则预测长答案
         if example['answer_type'] != AnswerType['UNKNOWN']:
             tok_long_start_position = orig_to_tok_index[example['long_start']]
-            tok_long_end_position = orig_to_tok_index[example['long_end']] - 1
+            if example['long_end'] == len(orig_to_tok_index):
+                tok_long_end_position = orig_to_tok_index[-1]
+            else:
+                tok_long_end_position = orig_to_tok_index[example['long_end']] - 1
             tok_start_position = tok_long_start_position
             tok_end_position = tok_long_end_position
         if example['answer_type'] == AnswerType['SHORT']:
             tok_short_start_position = orig_to_tok_index[example['short_start']]
-            tok_short_end_position = orig_to_tok_index[example['short_end']] - 1
+            if example['short_end'] == len(orig_to_tok_index):
+                tok_short_end_position = orig_to_tok_index[-1]
+            else:
+                tok_short_end_position = orig_to_tok_index[example['short_end']] - 1
             tok_start_position = tok_short_start_position
             tok_end_position = tok_short_end_position
 
@@ -510,15 +559,15 @@ def convert_single_example(example, tokenizer, is_training, args):
                 end_position = tok_end_position - doc_start + doc_offset
                 answer_type = example['answer_type']
 
-                # # 如果是短答案，对一下答案是否正确
-                # if example['answer_type'] == AnswerType['SHORT']:
-                #     answer_text = " ".join(tokens[start_position:(end_position + 1)])
-                #     answer_text = answer_text.replace(' ##', '').replace('## ', '').replace('##', '')
-                #     gt_answer = example['short_answer_text'].lower()
-                #     answer_text_chars = [c for c in answer_text if c not in " \t\r\n" and ord(c) != 0x202F]
-                #     gt_answer_chars = [c for c in gt_answer if c not in " \t\r\n" and ord(c) != 0x202F]
-                #     if "".join(answer_text_chars) != "".join(gt_answer_chars):
-                #         print(answer_text, 'V.S.', gt_answer)
+                # 如果是短答案，对一下答案是否正确
+                if example['answer_type'] == AnswerType['SHORT']:
+                    answer_text = " ".join(tokens[start_position:(end_position + 1)])
+                    answer_text = answer_text.replace(' ##', '').replace('## ', '').replace('##', '')
+                    gt_answer = example['short_answer_text'].lower()
+                    answer_text_chars = [c for c in answer_text if c not in " \t\r\n" and ord(c) != 0x202F]
+                    gt_answer_chars = [c for c in gt_answer if c not in " \t\r\n" and ord(c) != 0x202F]
+                    if "".join(answer_text_chars) != "".join(gt_answer_chars):
+                        print(answer_text, 'V.S.', gt_answer)
 
         feature = InputFeatures(
             unique_id=None,
@@ -532,6 +581,178 @@ def convert_single_example(example, tokenizer, is_training, args):
             segment_ids=segment_ids,
             start_position=start_position,
             end_position=end_position,
+            answer_text=answer_text,
+            answer_type=answer_type)
+
+        features.append(feature)
+
+    return features
+
+
+def convert_single_ls_example(example, tokenizer, is_training, args):
+    """Converts a single NqExample into a list of InputFeatures."""
+    tok_to_orig_index = []
+    orig_to_tok_index = []
+    all_doc_tokens = []  # all subtokens of original doc after tokenizing
+    features = []
+    for (i, token) in enumerate(example['paragraph_tokens']):
+        orig_to_tok_index.append(len(all_doc_tokens))
+        sub_tokens = tokenize(tokenizer, token)
+        tok_to_orig_index.extend([i] * len(sub_tokens))
+        all_doc_tokens.extend(sub_tokens)
+
+    # 特别注意！由于在paragraph_tokens中我们的token已经映射过一次了
+    # 这里wordpiece等于又映射了一遍，所以这里的操作是二次映射
+    if example['position_map']:
+        tok_to_orig_index = [example['position_map'][index] for index in tok_to_orig_index]
+
+    # QUERY
+    query_tokens = []
+    query_tokens.append("[Q]")
+    query_tokens.extend(tokenize(tokenizer, example['question_text']))
+    if len(query_tokens) > args.max_query_length:
+        query_tokens = query_tokens[-args.max_query_length:]
+
+    # ANSWER 预处理的时候先长短分开
+    tok_long_start_position = -1
+    tok_long_end_position = -1
+    tok_short_start_position = -1
+    tok_short_end_position = -1
+    # 这里终点是必然在para_tokens内的
+    if is_training:
+        if example['answer_type'] != AnswerType['UNKNOWN']:
+            tok_long_start_position = orig_to_tok_index[example['long_start']]
+            if example['long_end'] == len(orig_to_tok_index):
+                tok_long_end_position = orig_to_tok_index[-1]
+            else:
+                tok_long_end_position = orig_to_tok_index[example['long_end']] - 1
+        if example['answer_type'] == AnswerType['SHORT']:
+            tok_short_start_position = orig_to_tok_index[example['short_start']]
+            if example['short_end'] == len(orig_to_tok_index):
+                tok_short_end_position = orig_to_tok_index[-1]
+            else:
+                tok_short_end_position = orig_to_tok_index[example['short_end']] - 1
+
+    # Get max tokens number for original doc,
+    # should minus query tokens number and 3 special tokens
+    # The -3 accounts for [CLS], [SEP] and [SEP]
+    max_tokens_for_doc = args.max_seq_length - len(query_tokens) - 3
+
+    # We can have documents that are longer than the maximum sequence length.
+    # To deal with this we do a sliding window approach, where we take chunks
+    # of up to our max length with a stride of `doc_stride`.
+    _DocSpan = collections.namedtuple("DocSpan", ["start", "length"])
+    doc_spans = []
+    start_offset = 0
+    while start_offset < len(all_doc_tokens):
+        length = len(all_doc_tokens) - start_offset  # compute number of tokens remaining unsliding
+        length = min(length, max_tokens_for_doc)  # determine current sliding window size
+        doc_spans.append(_DocSpan(start=start_offset, length=length))
+
+        # Consider case for reaching end of original doc
+        if start_offset + length == len(all_doc_tokens):
+            break
+        start_offset += min(length, args.doc_stride)
+
+    # Convert window + query + special tokens to feature
+    for (doc_span_index, doc_span) in enumerate(doc_spans):
+        tokens = []
+        token_to_orig_map = {}
+        token_is_max_context = {}
+        segment_ids = []
+        tokens.append("[CLS]")
+        segment_ids.append(0)
+        tokens.extend(query_tokens)
+        segment_ids.extend([0] * len(query_tokens))
+        tokens.append("[SEP]")
+        segment_ids.append(0)
+
+        for i in range(doc_span.length):
+            split_token_index = doc_span.start + i
+            token_to_orig_map[len(tokens)] = tok_to_orig_index[split_token_index]
+
+            is_max_context = check_is_max_context(doc_spans, doc_span_index, split_token_index)
+            token_is_max_context[len(tokens)] = is_max_context
+            tokens.append(all_doc_tokens[split_token_index])
+            segment_ids.append(1)
+        tokens.append("[SEP]")
+        segment_ids.append(1)
+        assert len(tokens) == len(segment_ids)
+
+        input_ids = tokenizer.convert_tokens_to_ids(tokens)
+
+        # The mask has 1 for real tokens and 0 for padding tokens. Only real
+        # tokens are attended to.
+        input_mask = [1] * len(input_ids)
+
+        # Zero-pad up to the sequence length.
+        padding = [0] * (args.max_seq_length - len(input_ids))
+        input_ids.extend(padding)
+        input_mask.extend(padding)
+        segment_ids.extend(padding)
+
+        assert len(input_ids) == args.max_seq_length
+        assert len(input_mask) == args.max_seq_length
+        assert len(segment_ids) == args.max_seq_length
+
+        long_start_position = None
+        long_end_position = None
+        short_start_position = None
+        short_end_position = None
+        answer_type = None
+        answer_text = ""
+        if is_training:
+            doc_start = doc_span.start
+            doc_end = doc_span.start + doc_span.length - 1
+            # For training, if our document chunk does not contain an annotation
+            # we throw it out, since there is nothing to predict.
+            contains_an_annotation = (tok_long_start_position >= doc_start and tok_long_end_position <= doc_end)
+            # 负样本需要经过采样，且目标为[CLS]
+            if (not contains_an_annotation) or example['answer_type'] == AnswerType['UNKNOWN']:
+                if args.include_unknowns < 0 or random.random() > args.include_unknowns:
+                    continue
+                long_start_position = 0
+                long_end_position = 0
+                short_start_position = 0
+                short_end_position = 0
+                answer_type = AnswerType['UNKNOWN']
+            else:
+                doc_offset = len(query_tokens) + 2
+                long_start_position = tok_long_start_position - doc_start + doc_offset
+                long_end_position = tok_long_end_position - doc_start + doc_offset
+                if example['answer_type'] == AnswerType['SHORT']:
+                    short_start_position = tok_short_start_position - doc_start + doc_offset
+                    short_end_position = tok_short_end_position - doc_start + doc_offset
+                else:
+                    short_start_position = 0
+                    short_end_position = 0
+                answer_type = example['answer_type']
+
+                # 如果是短答案，对一下答案是否正确
+                if example['answer_type'] == AnswerType['SHORT']:
+                    answer_text = " ".join(tokens[short_start_position:(short_end_position + 1)])
+                    answer_text = answer_text.replace(' ##', '').replace('## ', '').replace('##', '')
+                    gt_answer = example['short_answer_text'].lower()
+                    answer_text_chars = [c for c in answer_text if c not in " \t\r\n" and ord(c) != 0x202F]
+                    gt_answer_chars = [c for c in gt_answer if c not in " \t\r\n" and ord(c) != 0x202F]
+                    if "".join(answer_text_chars) != "".join(gt_answer_chars) \
+                            and len("".join(answer_text_chars)) != len("".join(gt_answer_chars)):
+                        print(answer_text, 'V.S.', gt_answer)
+
+        feature = InputLSFeatures(
+            unique_id=None,
+            example_index=None,
+            doc_span_index=doc_span_index,
+            tokens=tokens,
+            token_to_orig_map=token_to_orig_map,
+            token_is_max_context=token_is_max_context,
+            input_ids=input_ids,
+            input_mask=input_mask,
+            segment_ids=segment_ids,
+            long_start_position=long_start_position,
+            long_end_position=long_end_position,
+            short_start_position=short_start_position,
+            short_end_position=short_end_position,
             answer_text=answer_text,
             answer_type=answer_type)
 
@@ -569,6 +790,8 @@ if __name__ == '__main__':
                         help="If positive, probability of including answers of type `UNKNOWN`.")
     parser.add_argument("--skip_nested_contexts", type=bool, default=True,
                         help="Completely ignore context that are not top level nodes in the page.")
+    parser.add_argument("--do_ls", type=bool, default=True,
+                        help="Whether to use long short index labels?")
     parser.add_argument("--tfidf_train_file", type=str, default='dataset/train_cand_selected_600.json')
     parser.add_argument("--tfidf_dev_file", type=str, default='dataset/dev_cand_selected_600.json')
     parser.add_argument("--tfidf_test_file", type=str, default='dataset/test_cand_selected_600.json')
@@ -577,38 +800,56 @@ if __name__ == '__main__':
     random.seed(args.seed)
     tokenizer = FullTokenizer('check_points/bert-large-wwm-finetuned-squad/vocab.txt', do_lower_case=True)
 
-    # # train preprocess
-    # example_output_file = os.path.join(args.output_dir,
-    #                                    'train_data_maxlen{}_tfidf_examples.json'.format(args.max_seq_length))
-    # feature_output_file = os.path.join(args.output_dir,
-    #                                    'train_data_maxlen{}_tfidf_features.bin'.format(args.max_seq_length))
-    # tfidf_dict = json.load(open(args.tfidf_train_file))
-    # examples = read_nq_examples(input_file=args.train_file, tfidf_dict=tfidf_dict, is_training=True, args=args)
-    # with open(example_output_file, 'w') as w:
-    #     json.dump(examples, w)
-    # features = convert_examples_to_features(examples=examples, tokenizer=tokenizer, is_training=True, args=args)
-    # torch.save(features, feature_output_file)
-    #
+    # train preprocess
+    example_output_file = os.path.join(args.output_dir,
+                                       'train_data_maxlen{}_tfidf_examples.json'.format(args.max_seq_length))
+    feature_output_file = os.path.join(args.output_dir,
+                                       'train_data_maxlen{}_tfidf_features.bin'.format(args.max_seq_length))
+    if args.do_ls:
+        feature_output_file = feature_output_file.replace('_features', '_ls_features')
+    if not os.path.exists(feature_output_file):
+        tfidf_dict = json.load(open(args.tfidf_train_file))
+        if os.path.exists(example_output_file):
+            examples = json.load(open(example_output_file))
+        else:
+            examples = read_nq_examples(input_file=args.train_file, tfidf_dict=tfidf_dict, is_training=True, args=args)
+            with open(example_output_file, 'w') as w:
+                json.dump(examples, w)
+        features = convert_examples_to_features(examples=examples, tokenizer=tokenizer, is_training=True, args=args)
+        torch.save(features, feature_output_file)
+
     # # dev preprocess
     # example_output_file = os.path.join(args.output_dir,
     #                                    'dev_data_maxlen{}_tfidf_examples.json'.format(args.max_seq_length))
     # feature_output_file = os.path.join(args.output_dir,
     #                                    'dev_data_maxlen{}_tfidf_features.bin'.format(args.max_seq_length))
-    # tfidf_dict = json.load(open(args.tfidf_dev_file))
-    # examples = read_nq_examples(input_file=args.dev_file, tfidf_dict=tfidf_dict, is_training=False, args=args)
-    # with open(example_output_file, 'w') as w:
-    #     json.dump(examples, w)
-    # features = convert_examples_to_features(examples=examples, tokenizer=tokenizer, is_training=False, args=args)
-    # torch.save(features, feature_output_file)
-
-    # test preprocess
-    example_output_file = os.path.join(args.output_dir,
-                                       'test_data_maxlen{}_tfidf_examples.json'.format(args.max_seq_length))
-    feature_output_file = os.path.join(args.output_dir,
-                                       'test_data_maxlen{}_tfidf_features.bin'.format(args.max_seq_length))
-    tfidf_dict = json.load(open(args.tfidf_test_file))
-    examples = read_nq_examples(input_file=args.test_file, tfidf_dict=tfidf_dict, is_training=False, args=args)
-    with open(example_output_file, 'w') as w:
-        json.dump(examples, w)
-    features = convert_examples_to_features(examples=examples, tokenizer=tokenizer, is_training=False, args=args)
-    torch.save(features, feature_output_file)
+    # if args.do_ls:
+    #     feature_output_file = feature_output_file.replace('_features', '_ls_features')
+    # if not os.path.exists(feature_output_file):
+    #     tfidf_dict = json.load(open(args.tfidf_dev_file))
+    #     if os.path.exists(example_output_file):
+    #         examples = json.load(open(example_output_file))
+    #     else:
+    #         examples = read_nq_examples(input_file=args.dev_file, tfidf_dict=tfidf_dict, is_training=False, args=args)
+    #         with open(example_output_file, 'w') as w:
+    #             json.dump(examples, w)
+    #     features = convert_examples_to_features(examples=examples, tokenizer=tokenizer, is_training=False, args=args)
+    #     torch.save(features, feature_output_file)
+    #
+    # # test preprocess
+    # example_output_file = os.path.join(args.output_dir,
+    #                                    'test_data_maxlen{}_tfidf_examples.json'.format(args.max_seq_length))
+    # feature_output_file = os.path.join(args.output_dir,
+    #                                    'test_data_maxlen{}_tfidf_features.bin'.format(args.max_seq_length))
+    # if args.do_ls:
+    #     feature_output_file = feature_output_file.replace('_features', '_ls_features')
+    # if not os.path.exists(feature_output_file):
+    #     tfidf_dict = json.load(open(args.tfidf_test_file))
+    #     if os.path.exists(example_output_file):
+    #         examples = json.load(open(example_output_file))
+    #     else:
+    #         examples = read_nq_examples(input_file=args.test_file, tfidf_dict=tfidf_dict, is_training=False, args=args)
+    #         with open(example_output_file, 'w') as w:
+    #             json.dump(examples, w)
+    #     features = convert_examples_to_features(examples=examples, tokenizer=tokenizer, is_training=False, args=args)
+    #     torch.save(features, feature_output_file)
