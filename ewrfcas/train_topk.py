@@ -1,6 +1,6 @@
 import torch
 import argparse
-from modeling import BertJointForNQ, BertConfig
+from modeling import BertJointForNQ2, BertConfig
 from torch.utils.data import TensorDataset, DataLoader
 import utils
 from tqdm import tqdm
@@ -14,9 +14,13 @@ from nq_eval import get_metrics_as_dict
 from utils_nq import read_candidates_from_one_split, compute_pred_dict, InputLSFeatures
 from pytorch_optimization import get_optimization, warmup_linear
 
-RawResult = collections.namedtuple(
-    "RawResult",
-    ["unique_id", "start_logits", "end_logits", "answer_type_logits"])
+RawResult = collections.namedtuple("RawResult",
+                                   ["unique_id",
+                                    "long_start_topk_logits", "long_start_topk_index",
+                                    "long_end_topk_logits", "long_end_topk_index",
+                                    "short_start_topk_logits", "short_start_topk_index",
+                                    "short_end_topk_logits", "short_end_topk_index",
+                                    "answer_type_logits"])
 
 
 def check_args(args):
@@ -53,10 +57,19 @@ def evaluate(model, args, dev_features, device, global_steps):
         for i, example_index in enumerate(example_indices):
             eval_feature = dev_features[example_index.item()]
             unique_id = str(eval_feature.unique_id)
+
             result = RawResult(unique_id=unique_id,
-                               start_logits=to_list(outputs[0][i]),
-                               end_logits=to_list(outputs[1][i]),
-                               answer_type_logits=to_list(outputs[2][i]))
+                               # [topk]
+                               long_start_topk_logits=outputs['long_start_topk_logits'][i].cpu().numpy(),
+                               long_start_topk_index=outputs['long_start_topk_index'][i].cpu().numpy(),
+                               long_end_topk_logits=outputs['long_end_topk_logits'][i].cpu().numpy(),
+                               long_end_topk_index=outputs['long_end_topk_index'][i].cpu().numpy(),
+                               # [topk, topk]
+                               short_start_topk_logits=outputs['short_start_topk_logits'][i].cpu().numpy(),
+                               short_start_topk_index=outputs['short_start_topk_index'][i].cpu().numpy(),
+                               short_end_topk_logits=outputs['short_end_topk_logits'][i].cpu().numpy(),
+                               short_end_topk_index=outputs['short_end_topk_index'][i].cpu().numpy(),
+                               answer_type_logits=to_list(outputs['answer_type_logits'][i]))
             all_results.append(result)
 
     pickle.dump(all_results, open(os.path.join(args.output_dir, 'RawResults.pkl'), 'wb'))
@@ -65,7 +78,8 @@ def evaluate(model, args, dev_features, device, global_steps):
     candidates_dict = read_candidates_from_one_split(args.predict_file)
     nq_pred_dict = compute_pred_dict(candidates_dict, dev_features,
                                      [r._asdict() for r in all_results],
-                                     args.n_best_size, args.max_answer_length)
+                                     args.n_best_size, args.max_answer_length, topk_pred=True,
+                                     long_n_top=5, short_n_top=5)
 
     output_prediction_file = os.path.join(args.output_dir, 'predictions' + str(global_steps) + '.json')
     with open(output_prediction_file, 'w') as f:
@@ -91,20 +105,15 @@ def load_cached_data(feature_dir, output_features=False, evaluate=False):
         all_example_index = torch.arange(all_input_ids.size(0), dtype=torch.long)
         dataset = TensorDataset(all_input_ids, all_input_mask, all_segment_ids, all_example_index)
     else:
-        start_positions = []
-        end_positions = []
-        for f in features:
-            if f.short_start_position == 0:
-                start_positions.append(f.long_start_position)
-                end_positions.append(f.long_end_position)
-            else:
-                start_positions.append(f.short_start_position)
-                end_positions.append(f.short_end_position)
-        all_start_positions = torch.tensor(start_positions, dtype=torch.long)
-        all_end_positions = torch.tensor(end_positions, dtype=torch.long)
+        all_long_start_positions = torch.tensor([f.long_start_position for f in features], dtype=torch.long)
+        all_long_end_positions = torch.tensor([f.long_end_position for f in features], dtype=torch.long)
+        all_short_start_positions = torch.tensor([f.short_start_position for f in features], dtype=torch.long)
+        all_short_end_positions = torch.tensor([f.short_end_position for f in features], dtype=torch.long)
         all_answer_types = torch.tensor([f.answer_type for f in features], dtype=torch.long)
         dataset = TensorDataset(all_input_ids, all_input_mask, all_segment_ids,
-                                all_start_positions, all_end_positions, all_answer_types)
+                                all_long_start_positions, all_long_end_positions,
+                                all_short_start_positions, all_short_end_positions,
+                                all_answer_types)
 
     if output_features:
         return dataset, features
@@ -118,12 +127,12 @@ def to_list(tensor):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument("--gpu_ids", default="0,1,2,3,4,5,6,7", type=str)
-    parser.add_argument("--train_epochs", default=3, type=int)
+    parser.add_argument("--train_epochs", default=2, type=int)
     parser.add_argument("--train_batch_size", default=48, type=int)
     parser.add_argument("--eval_batch_size", default=128, type=int)
     parser.add_argument("--n_best_size", default=20, type=int)
     parser.add_argument("--max_answer_length", default=30, type=int)
-    parser.add_argument("--eval_steps", default=1300, type=int)
+    parser.add_argument("--eval_steps", default=1948, type=int)
     parser.add_argument('--seed', type=int, default=556)
     parser.add_argument('--lr', type=float, default=3e-5)
     parser.add_argument('--dropout', type=float, default=0.1)
@@ -135,7 +144,7 @@ if __name__ == '__main__':
 
     parser.add_argument("--bert_config_file", default='check_points/bert-large-wwm-finetuned-squad', type=str)
     parser.add_argument("--init_restore_dir", default='check_points/bert-large-wwm-finetuned-squad', type=str)
-    parser.add_argument("--output_dir", default='check_points/bert-large-tfidf-600-top8-V2', type=str)
+    parser.add_argument("--output_dir", default='check_points/bert-large-tfidf-600-top8-V3', type=str)
     parser.add_argument("--log_file", default='log.txt', type=str)
     parser.add_argument("--setting_file", default='setting.txt', type=str)
 
@@ -183,7 +192,7 @@ if __name__ == '__main__':
     print('warmup steps:', int(args.warmup_rate * total_steps))
 
     bert_config = BertConfig.from_json_file(args.bert_config_file)
-    model = BertJointForNQ(bert_config)
+    model = BertJointForNQ2(bert_config, long_n_top=5, short_n_top=5)
     utils.torch_show_all_params(model)
     utils.torch_init_model(model, args.init_restore_dir)
     if args.float16:
@@ -215,14 +224,19 @@ if __name__ == '__main__':
         with tqdm(total=steps_per_epoch, desc='Epoch %d' % (i + 1)) as pbar:
             for step, batch in enumerate(train_dataloader):
                 batch = tuple(t.to(device) for t in batch)
-                input_ids, input_mask, segment_ids, start_positions, end_positions, answer_type = batch
+                input_ids, input_mask, segment_ids, \
+                long_start_positions, long_end_positions, \
+                short_start_positions, short_end_positions, \
+                answer_type = batch
                 inputs = {'input_ids': input_ids,
                           'attention_mask': input_mask,
                           'token_type_ids': segment_ids,
-                          'start_positions': start_positions,
-                          'end_positions': end_positions,
+                          'long_start_positions': long_start_positions,
+                          'long_end_positions': long_end_positions,
+                          'short_start_positions': short_start_positions,
+                          'short_end_positions': short_end_positions,
                           'answer_types': answer_type}
-                loss = model(**inputs)[0]
+                loss = model(**inputs)
                 if n_gpu > 1:
                     loss = loss.mean()  # mean() to average on multi-gpu.
                 total_loss += loss.item()
@@ -250,7 +264,7 @@ if __name__ == '__main__':
                         aw.write("--------------steps:{}--------------\n".format(global_steps))
                         aw.write(str(json.dumps(results, indent=2)) + '\n')
 
-                    if results['all-f1'] > best_f1:
+                    if results['all-f1'] >= best_f1:
                         best_f1 = results['all-f1']
                         print('Best f1:', best_f1)
                         model_to_save = model.module if hasattr(model, 'module') else model
