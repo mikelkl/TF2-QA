@@ -9,54 +9,62 @@ import json
 import collections
 import pickle
 from nq_eval import get_metrics_as_dict
-from utils_nq import read_candidates_from_one_split, compute_pred_dict, InputFeatures
+from utils_nq import read_candidates_from_one_split, compute_pred_dict, InputLSFeatures
 
-RawResult = collections.namedtuple(
-    "RawResult",
-    ["unique_id", "example_id", "start_logits", "end_logits", "answer_type_logits"])
+RawResult = collections.namedtuple("RawResult",
+                                   ["unique_id",
+                                    "long_start_topk_logits", "long_start_topk_index",
+                                    "long_end_topk_logits", "long_end_topk_index",
+                                    "short_start_topk_logits", "short_start_topk_index",
+                                    "short_end_topk_logits", "short_end_topk_index",
+                                    "answer_type_logits"])
 
 
 def evaluate(model, args, dev_features, device, global_steps):
     # Eval!
     print("***** Running evaluation *****")
-    # all_results = []
-    # for batch in tqdm(eval_dataloader, desc="Evaluating"):
-    #     model.eval()
-    #     batch = tuple(t.to(device) for t in batch)
-    #     with torch.no_grad():
-    #         input_ids, input_mask, segment_ids, example_indices = batch
-    #         inputs = {'input_ids': input_ids,
-    #                   'attention_mask': input_mask,
-    #                   'token_type_ids': segment_ids}
-    #         outputs = model(**inputs)
-    #
-    #     for i, example_index in enumerate(example_indices):
-    #         eval_feature = dev_features[example_index.item()]
-    #         unique_id = str(eval_feature.unique_id)
-    #         result = RawResult(unique_id=unique_id,
-    #                            example_id=eval_feature.example_index,
-    #                            start_logits=to_list(outputs[0][i]),
-    #                            end_logits=to_list(outputs[1][i]),
-    #                            answer_type_logits=to_list(outputs[2][i]))
-    #         all_results.append(result)
+    all_results = []
+    for batch in tqdm(eval_dataloader, desc="Evaluating"):
+        model.eval()
+        batch = tuple(t.to(device) for t in batch)
+        with torch.no_grad():
+            input_ids, input_mask, segment_ids, example_indices = batch
+            inputs = {'input_ids': input_ids,
+                      'attention_mask': input_mask,
+                      'token_type_ids': segment_ids}
+            outputs = model(**inputs)
 
-    # pickle.dump(all_results, open(os.path.join(args.output_dir, 'RawResults.pkl'), 'wb'))
+        for i, example_index in enumerate(example_indices):
+            eval_feature = dev_features[example_index.item()]
+            unique_id = str(eval_feature.unique_id)
+
+            result = RawResult(unique_id=unique_id,
+                               # [topk]
+                               long_start_topk_logits=outputs['long_start_topk_logits'][i].cpu().numpy(),
+                               long_start_topk_index=outputs['long_start_topk_index'][i].cpu().numpy(),
+                               long_end_topk_logits=outputs['long_end_topk_logits'][i].cpu().numpy(),
+                               long_end_topk_index=outputs['long_end_topk_index'][i].cpu().numpy(),
+                               # [topk, topk]
+                               short_start_topk_logits=outputs['short_start_topk_logits'][i].cpu().numpy(),
+                               short_start_topk_index=outputs['short_start_topk_index'][i].cpu().numpy(),
+                               short_end_topk_logits=outputs['short_end_topk_logits'][i].cpu().numpy(),
+                               short_end_topk_index=outputs['short_end_topk_index'][i].cpu().numpy(),
+                               answer_type_logits=to_list(outputs['answer_type_logits'][i]))
+            all_results.append(result)
+
+    pickle.dump(all_results, open(os.path.join(args.output_dir, 'RawResults.pkl'), 'wb'))
     # all_results = pickle.load(open(os.path.join(args.output_dir, 'RawResults.pkl'), 'rb'))
-    #
-    # # print("Going to candidates file")
-    # candidates_dict = read_candidates_from_one_split(args.predict_file)
-    #
-    # # print("Compute_pred_dict")
-    # nq_pred_dict = compute_pred_dict(candidates_dict, dev_features,
-    #                                  [r._asdict() for r in all_results],
-    #                                  args.n_best_size, args.max_answer_length)
-    #
-    output_prediction_file = os.path.join(args.output_dir, 'predictions' + str(global_steps) + '.json')
-    # # print("Saving predictions to", output_prediction_file)
-    # with open(output_prediction_file, 'w') as f:
-    #     json.dump({'predictions': list(nq_pred_dict.values())}, f)
 
-    # print("Computing f1 score")
+    candidates_dict = read_candidates_from_one_split(args.predict_file)
+    nq_pred_dict = compute_pred_dict(candidates_dict, dev_features,
+                                     [r._asdict() for r in all_results],
+                                     args.n_best_size, args.max_answer_length, topk_pred=True,
+                                     long_n_top=5, short_n_top=5)
+
+    output_prediction_file = os.path.join(args.output_dir, 'predictions' + str(global_steps) + '.json')
+    with open(output_prediction_file, 'w') as f:
+        json.dump({'predictions': list(nq_pred_dict.values())}, f)
+
     results = get_metrics_as_dict(args.predict_file, output_prediction_file)
     print('Steps:{}'.format(global_steps))
     print(json.dumps(results, indent=2))
@@ -68,8 +76,6 @@ def evaluate(model, args, dev_features, device, global_steps):
 
 def load_cached_data(feature_dir, output_features=False, evaluate=False):
     features = torch.load(feature_dir)
-    if type(features) == tuple:
-        features = features[0]
 
     # Convert to Tensors and build dataset
     all_input_ids = torch.tensor([f.input_ids for f in features], dtype=torch.long)
@@ -79,11 +85,15 @@ def load_cached_data(feature_dir, output_features=False, evaluate=False):
         all_example_index = torch.arange(all_input_ids.size(0), dtype=torch.long)
         dataset = TensorDataset(all_input_ids, all_input_mask, all_segment_ids, all_example_index)
     else:
-        all_start_positions = torch.tensor([f.start_position for f in features], dtype=torch.long)
-        all_end_positions = torch.tensor([f.end_position for f in features], dtype=torch.long)
+        all_long_start_positions = torch.tensor([f.long_start_position for f in features], dtype=torch.long)
+        all_long_end_positions = torch.tensor([f.long_end_position for f in features], dtype=torch.long)
+        all_short_start_positions = torch.tensor([f.short_start_position for f in features], dtype=torch.long)
+        all_short_end_positions = torch.tensor([f.short_end_position for f in features], dtype=torch.long)
         all_answer_types = torch.tensor([f.answer_type for f in features], dtype=torch.long)
         dataset = TensorDataset(all_input_ids, all_input_mask, all_segment_ids,
-                                all_start_positions, all_end_positions, all_answer_types)
+                                all_long_start_positions, all_long_end_positions,
+                                all_short_start_positions, all_short_end_positions,
+                                all_answer_types)
 
     if output_features:
         return dataset, features
@@ -113,16 +123,15 @@ if __name__ == '__main__':
     parser.add_argument("--float16", default=True, type=bool)
 
     parser.add_argument("--bert_config_file", default='check_points/bert-large-wwm-finetuned-squad', type=str)
-    parser.add_argument("--init_restore_dir", default='check_points/bert-large-wwm-finetuned-squad/checkpoint-41224',
+    parser.add_argument("--init_restore_dir", default='check_points/bert-large-tfidf-600-top8-V4',
                         type=str)
-    parser.add_argument("--output_dir", default='check_points/bert-large-wwm-finetuned-squad/checkpoint-41224',
+    parser.add_argument("--output_dir", default='check_points/bert-large-tfidf-600-top8-V4',
                         type=str)
     parser.add_argument("--log_file", default='log.txt', type=str)
 
     parser.add_argument("--predict_file", default='data/simplified-nq-dev.jsonl', type=str)
-    parser.add_argument("--train_feat_dir", default='dataset/train_data_maxlen512_tfidf_features.bin', type=str)
     # dev_data_maxlen512_tfidf_features.bin
-    parser.add_argument("--dev_feat_dir", default='dataset/cached_dev_pytorch_model.bin_512', type=str)
+    parser.add_argument("--dev_feat_dir", default='dataset/dev_data_maxlen512_tfidf_ls_features.bin', type=str)
 
     args = parser.parse_args()
     args.bert_config_file = os.path.join(args.bert_config_file, 'config.json')
@@ -151,4 +160,4 @@ if __name__ == '__main__':
     if n_gpu > 1:
         model = torch.nn.DataParallel(model)
 
-    results = evaluate(model, args, dev_features, device, 0)
+    results = evaluate(model, args, dev_features, device, 23376)

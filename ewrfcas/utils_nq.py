@@ -457,21 +457,6 @@ class InputFeatures(object):
                  end_position=None,
                  answer_text="",
                  answer_type=AnswerType.SHORT):
-        """
-        :param unique_id:
-        :param example_index:
-        :param doc_span_index:
-        :param tokens:
-        :param token_to_orig_map: map index of each token in tokens field from current sliding window to original context
-        :param token_is_max_context:
-        :param input_ids:
-        :param input_mask:
-        :param segment_ids:
-        :param start_position:
-        :param end_position:
-        :param answer_text:
-        :param answer_type:
-        """
         self.unique_id = unique_id
         self.example_index = example_index
         self.doc_span_index = doc_span_index
@@ -483,6 +468,42 @@ class InputFeatures(object):
         self.segment_ids = segment_ids
         self.start_position = start_position
         self.end_position = end_position
+        self.answer_text = answer_text
+        self.answer_type = answer_type
+
+
+class InputLSFeatures(object):
+    """A single set of features of data."""
+
+    def __init__(self,
+                 unique_id,
+                 example_index,
+                 doc_span_index,
+                 tokens,
+                 token_to_orig_map,
+                 token_is_max_context,
+                 input_ids,
+                 input_mask,
+                 segment_ids,
+                 long_start_position=None,
+                 long_end_position=None,
+                 short_start_position=None,
+                 short_end_position=None,
+                 answer_text="",
+                 answer_type=AnswerType['SHORT']):
+        self.unique_id = unique_id
+        self.example_index = example_index
+        self.doc_span_index = doc_span_index
+        self.tokens = tokens
+        self.token_to_orig_map = token_to_orig_map
+        self.token_is_max_context = token_is_max_context
+        self.input_ids = input_ids
+        self.input_mask = input_mask
+        self.segment_ids = segment_ids
+        self.long_start_position = long_start_position
+        self.long_end_position = long_end_position
+        self.short_start_position = short_start_position
+        self.short_end_position = short_end_position
         self.answer_text = answer_text
         self.answer_type = answer_type
 
@@ -769,6 +790,7 @@ class ScoreSummary(object):
     def __init__(self):
         self.predicted_label = None
         self.short_span_score = None
+        self.long_span_score = None
         self.cls_token_score = None
         self.answer_type_logits = None
 
@@ -859,6 +881,30 @@ def compute_predictions(example, n_best_size=10, max_answer_length=30):
     else:
         yes_no_answer = "NONE"
 
+    # summary.predicted_label = {
+    #     "example_id": int(example.example_id),
+    #     "long_answer": {
+    #         "start_token": int(long_span.start_token_idx) if answer_type != AnswerType.UNKNOWN else -1,
+    #         "end_token": int(long_span.end_token_idx) if answer_type != AnswerType.UNKNOWN else -1,
+    #         "start_byte": -1,
+    #         "end_byte": -1
+    #     },
+    #     "long_answer_score": float(score),
+    #     "short_answers": [{
+    #         "start_token": int(
+    #             short_span.start_token_idx) if answer_type == AnswerType.SHORT else -1,
+    #         "end_token": int(
+    #             short_span.end_token_idx) if answer_type == AnswerType.SHORT else -1,
+    #         "start_byte": -1,
+    #         "end_byte": -1
+    #     }],
+    #     "short_answers_score": float(score),
+    #     "yes_no_answer": yes_no_answer,
+    #     "answer_type_logits": summary.answer_type_logits.tolist(),
+    #     "answer_type": answer_type
+    # }
+
+    #######fake predict######
     summary.predicted_label = {
         "example_id": int(example.example_id),
         "long_answer": {
@@ -869,10 +915,138 @@ def compute_predictions(example, n_best_size=10, max_answer_length=30):
         },
         "long_answer_score": float(score),
         "short_answers": [{
-            "start_token": int(
-                short_span.start_token_idx) if answer_type == AnswerType.SHORT else -1,
-            "end_token": int(
-                short_span.end_token_idx) if answer_type == AnswerType.SHORT else -1,
+            "start_token": int(short_span.start_token_idx),
+            "end_token": int(short_span.end_token_idx),
+            "start_byte": -1,
+            "end_byte": -1
+        }],
+        "short_answers_score": float(score),
+        "yes_no_answer": 'NONE',  # yes_no_answer,
+        "answer_type_logits": summary.answer_type_logits.tolist(),
+        "answer_type": answer_type
+    }
+
+    return summary
+
+
+def compute_topk_predictions(example, long_topk=5, short_topk=5, max_answer_length=30):
+    """
+    Converts an example into an NQEval object for evaluation.
+    :param example: EvalExample
+    :return: ScoreSummary
+    """
+    predictions = []
+    for unique_id, result in example.results.items():
+        if unique_id not in example.features:
+            raise ValueError("No feature found with unique_id:", unique_id)
+        # convert dict-style token_to_orig_map to list-style token_map,
+        # key -> index, value -> element
+        # -1 indicate not belong to original doc
+        token_map = [-1] * len(example.features[unique_id].input_ids)
+        for k, v in example.features[unique_id].token_to_orig_map.items():
+            token_map[k] = v
+        token_map = np.array(token_map)
+
+        feature_length = np.sum(example.features[unique_id].input_mask)
+
+        for i in range(long_topk):
+            for j in range(short_topk):
+                # [1]
+                long_start_logits = result['long_start_topk_logits'][i]
+                long_start_index = result['long_start_topk_index'][i]
+                long_end_logits = result['long_end_topk_logits'][i]
+                long_end_index = result['long_end_topk_index'][i]
+
+                short_start_logits = result['short_start_topk_logits'][i][j]
+                short_start_index = result['short_start_topk_index'][i][j]
+                short_end_logits = result['short_end_topk_logits'][i][j]
+                short_end_index = result['short_end_topk_index'][i][j]
+
+                if long_start_index >= feature_length:
+                    continue
+                if long_end_index >= feature_length:
+                    continue
+                if long_start_index > long_end_index:
+                    continue
+                if token_map[long_start_index] == -1:
+                    continue
+                if token_map[long_end_index] == -1:
+                    continue
+                rel_long_start_index = token_map[long_start_index]
+                rel_long_end_index = token_map[long_end_index] + 1
+
+                if short_start_index >= feature_length:
+                    continue
+                if short_end_index >= feature_length:
+                    continue
+                if short_start_index > short_end_index:
+                    continue
+                if token_map[short_start_index] == -1:
+                    continue
+                if token_map[short_end_index] == -1:
+                    continue
+                rel_short_start_index = token_map[short_start_index]
+                rel_short_end_index = token_map[short_end_index] + 1
+                if rel_short_end_index - rel_short_start_index > max_answer_length:
+                    continue
+
+                summary = ScoreSummary()
+                summary.long_span_score = (long_start_logits + long_end_logits)
+                summary.short_span_score = (short_start_logits + short_end_logits)
+                summary.cls_token_score = 0
+                summary.answer_type_logits = result["answer_type_logits"] - \
+                                             np.array(result["answer_type_logits"]).mean()
+
+                score = summary.short_span_score + summary.long_span_score
+                predictions.append((score, summary, rel_long_start_index, rel_long_end_index,
+                                    rel_short_start_index, rel_short_end_index))
+
+    short_span = Span(-1, -1)
+    long_span = Span(-1, -1)
+    score = 0
+    summary = ScoreSummary()
+    if predictions:
+        score, summary, long_start_span, long_end_span, short_start_span, short_end_span = \
+            sorted(predictions, key=lambda x: x[0], reverse=True)[0]
+        long_span = Span(long_start_span, long_end_span)
+        best_long_span = Span(long_start_span, long_end_span)
+        short_span = Span(short_start_span, short_end_span)
+        # 对于长答案，我们从candidates里选择最接近的一组cand
+        min_dis = 99999
+        for c in example.candidates:
+            if c['top_level'] is False:
+                continue
+            start = long_span.start_token_idx
+            end = long_span.end_token_idx
+
+            index_dis = abs(start - c["start_token"]) + abs(end - c["end_token"])
+            if index_dis < min_dis:
+                min_dis = index_dis
+                best_long_span = Span(c["start_token"], c["end_token"])
+        long_span = best_long_span
+    else:
+        summary.answer_type_logits = np.array([0] * 5)
+
+    answer_type = int(np.argmax(summary.answer_type_logits))
+    if answer_type == AnswerType.YES:
+        yes_no_answer = "YES"
+    elif answer_type == AnswerType.NO:
+        yes_no_answer = "NO"
+    else:
+        yes_no_answer = "NONE"
+
+    summary.predicted_label = {
+        "example_id": int(example.example_id),
+        "long_answer": {
+            "start_token": int(long_span.start_token_idx) if answer_type != AnswerType.UNKNOWN else -1,
+            "end_token": int(long_span.end_token_idx) if answer_type != AnswerType.UNKNOWN else -1,
+            "start_byte": -1,
+            "end_byte": -1
+        },
+        "long_answer_score": float(score),
+        "short_answers": [{
+            "start_token": int(short_span.start_token_idx) if answer_type == AnswerType.SHORT else -1,
+            "end_token": int(short_span.end_token_idx) if answer_type == AnswerType.SHORT else -1,
             "start_byte": -1,
             "end_byte": -1
         }],
@@ -885,7 +1059,9 @@ def compute_predictions(example, n_best_size=10, max_answer_length=30):
     return summary
 
 
-def compute_pred_dict(candidates_dict, dev_features, raw_results, n_best_size=10, max_answer_length=30):
+def compute_pred_dict(candidates_dict, dev_features, raw_results,
+                      n_best_size=10, max_answer_length=30, topk_pred=False,
+                      long_n_top=5, short_n_top=5):
     """
     Computes official answer key from raw logits.
     :param candidates_dict: dict{str:list}
@@ -898,6 +1074,10 @@ def compute_pred_dict(candidates_dict, dev_features, raw_results, n_best_size=10
             ('answer_type_logits', [2.1452865600585938, ...])]))
     :return: dict{int:dict}
     """
+    # examples_by_id = [(str(k), 0, v) for k, v in candidates_dict.items()]
+    # raw_results_by_id = [(str(res["unique_id"]), 1, res) for res in raw_results]
+    # features_by_id = [(str(d.unique_id), 2, d) for d in dev_features]
+
     examples_by_id = [(str(k), 0, v) for k, v in candidates_dict.items()]
     raw_results_by_id = [(str(res["unique_id"]), 1, res) for res in raw_results]
     features_by_id = [(str(d.unique_id), 2, d) for d in dev_features]
@@ -908,6 +1088,18 @@ def compute_pred_dict(candidates_dict, dev_features, raw_results, n_best_size=10
     # Put example, result and feature for identical unique_id adjacent
     # E.g [(-9198586108074363474, 0, `example`), (-9198586108074363474, 0, `result`),
     # (-9198586108074363474, 0, `feature`), ...]
+    # merged = {}
+    # for idx, type_, datum in examples_by_id:
+    #     merged[idx] = {'example': datum}
+    # for idx, type_, datum in raw_results_by_id:
+    #     merged[str(datum['example_id'])]['results'] = datum
+    # for idx, type_, datum in features_by_id:
+    #     merged[str(datum.example_index)]['features'] = datum
+    #
+    # for idx in merged:
+    #     examples.append(EvalExample(idx, merged[idx]['example']))
+    #     examples[-1].features[idx] = merged[idx]['features']
+    #     examples[-1].results[idx] = merged[idx]['results']
     merged = sorted(examples_by_id + raw_results_by_id + features_by_id)
     logger.info('done.')
     for idx, type_, datum in merged:
@@ -922,7 +1114,11 @@ def compute_pred_dict(candidates_dict, dev_features, raw_results, n_best_size=10
     logger.info('Computing predictions...')
     nq_pred_dict = {}
     for e in tqdm(examples, desc="Computing predictions..."):
-        summary = compute_predictions(e, n_best_size, max_answer_length)
+        if topk_pred is False:
+            summary = compute_predictions(e, n_best_size, max_answer_length)
+        else:
+            summary = compute_topk_predictions(e, long_topk=long_n_top, short_topk=short_n_top,
+                                               max_answer_length=max_answer_length)
         nq_pred_dict[e.example_id] = summary.predicted_label
 
     return nq_pred_dict
