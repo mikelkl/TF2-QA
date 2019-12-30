@@ -87,7 +87,7 @@ def make_submission(output_prediction_file, output_dir):
     long_answers = dict(zip(test_answers_df["example_id"], test_answers_df["long_answer"]))
     short_answers = dict(zip(test_answers_df["example_id"], test_answers_df["short_answer"]))
 
-    sample_submission = pd.read_csv("data/sample_submission.csv")
+    sample_submission = pd.read_csv("../input/tensorflow2-question-answering/sample_submission.csv")
 
     long_prediction_strings = sample_submission[sample_submission["example_id"].str.contains("_long")].apply(
         lambda q: long_answers[q["example_id"].replace("_long", "")], axis=1)
@@ -109,16 +109,18 @@ if __name__ == '__main__':
     parser.add_argument("--n_best_size", default=20, type=int)
     parser.add_argument("--max_answer_length", default=30, type=int)
     parser.add_argument("--float16", default=True, type=bool)
-    parser.add_argument("--bert_config_file", default=None, type=str)
-    parser.add_argument("--init_restore_dir", default=None, type=str)
-    parser.add_argument("--predict_file", default='data/simplified-nq-test.jsonl', type=str)
-    parser.add_argument("--output_dir", default='check_points/bert-large-wwm-finetuned-squad/checkpoint-41224',
+    parser.add_argument("--bert_config_file",
+                        default='../output/models/bert-large-uncased-whole-word-masking-finetuned-squad/config.json',
                         type=str)
-    parser.add_argument("--predict_feat", default='dataset/test_data_maxlen512_tfidf_features.bin',
+    parser.add_argument("--init_restore_dir",
+                        default='../output/models/bert-large-uncased-whole-word-masking-finetuned-squad/pytorch_model.bin',
+                        type=str)
+    parser.add_argument("--predict_file", default='../input/tensorflow2-question-answering/simplified-nq-test.jsonl', type=str)
+    parser.add_argument("--output_dir", default='../output/models/bert-large-uncased-whole-word-masking-finetuned-squad/',
+                        type=str)
+    parser.add_argument("--predict_feat", default='../input/tensorflow2-question-answering/test_data_maxlen512_top10_features.bin',
                         type=str)
     args = parser.parse_args()
-    args.bert_config_file = os.path.join(args.output_dir, 'config.json')
-    args.init_restore_dir = os.path.join(args.output_dir, 'best_checkpoint.pth')
 
     os.environ["CUDA_VISIBLE_DEVICES"] = args.gpu_ids
     device = torch.device("cuda")

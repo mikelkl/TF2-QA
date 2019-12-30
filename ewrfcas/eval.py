@@ -109,18 +109,16 @@ if __name__ == '__main__':
     parser.add_argument("--weight_decay_rate", default=0.01, type=float, help='weight_decay_rate')
     parser.add_argument("--float16", default=True, type=bool)
 
-    parser.add_argument("--bert_config_file", default='check_points/bert-large-wwm-finetuned-squad', type=str)
-    parser.add_argument("--init_restore_dir", default='check_points/bert-large-wwm-finetuned-squad/checkpoint-41224', type=str)
-    parser.add_argument("--output_dir", default='check_points/bert-large-wwm-finetuned-squad/checkpoint-41224', type=str)
+    parser.add_argument("--bert_config_file", default='../output/models/bert-large-uncased-whole-word-masking-finetuned-squad/config.json', type=str)
+    parser.add_argument("--init_restore_dir", default='../output/models/bert-large-uncased-whole-word-masking-finetuned-squad/pytorch_model.bin', type=str)
+    parser.add_argument("--output_dir", default='../output/models/bert-large-uncased-whole-word-masking-finetuned-squad/', type=str)
     parser.add_argument("--log_file", default='log.txt', type=str)
 
-    parser.add_argument("--predict_file", default='data/simplified-nq-dev.jsonl', type=str)
-    parser.add_argument("--train_feat_dir", default='dataset/train_data_maxlen512_tfidf_features.bin', type=str)
-    parser.add_argument("--dev_feat_dir", default='dataset/dev_data_maxlen512_tfidf_features.bin', type=str)
+    parser.add_argument("--predict_file", default='../input/tensorflow2-question-answering/simplified-nq-dev.jsonl', type=str)
+    # parser.add_argument("--train_feat_dir", default='dataset/train_data_maxlen512_tfidf_features.bin', type=str)
+    parser.add_argument("--dev_feat_dir", default='../input/tensorflow2-question-answering/dev_data_maxlen512_ranking_top10_features.bin', type=str)
 
     args = parser.parse_args()
-    args.bert_config_file = os.path.join(args.bert_config_file, 'config.json')
-    args.init_restore_dir = os.path.join(args.init_restore_dir, 'best_checkpoint.pth')
     args.log_file = os.path.join(args.output_dir, args.log_file)
     os.makedirs(args.output_dir, exist_ok=True)
 
