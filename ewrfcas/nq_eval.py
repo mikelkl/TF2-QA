@@ -217,6 +217,17 @@ def score_answers(gold_annotation_dict, pred_dict):
     for example_id in gold_id_set:
         gold = gold_annotation_dict[example_id]
         pred = pred_dict[example_id]
+        # has_short = False
+        # true_short = False
+        # for g in gold:
+        #     for g1 in g.short_answer_span_list:
+        #         if g1.start_token_idx != -1:
+        #             has_short = True
+        #         else:
+        #             continue
+        #         if g1.start_token_idx == pred.short_answer_span_list[0].start_token_idx \
+        #                 and g1.end_token_idx == pred.short_answer_span_list[0].end_token_idx:
+        #             true_short = True
 
         long_answer_stats.append(score_long_answer(gold, pred))
         short_answer_stats.append(score_short_answer(gold, pred))

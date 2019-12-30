@@ -1,6 +1,6 @@
 import torch
 import argparse
-from modeling import BertJointForNQ2, BertConfig
+from albert_modeling import AlBertJointForNQ, AlbertConfig
 from torch.utils.data import TensorDataset, DataLoader
 import utils
 from tqdm import tqdm
@@ -127,12 +127,12 @@ def to_list(tensor):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument("--gpu_ids", default="0,1,2,3,4,5,6,7", type=str)
-    parser.add_argument("--train_epochs", default=3, type=int)
-    parser.add_argument("--train_batch_size", default=48, type=int)
-    parser.add_argument("--eval_batch_size", default=128, type=int)
+    parser.add_argument("--train_epochs", default=2, type=int)
+    parser.add_argument("--train_batch_size", default=32, type=int)
+    parser.add_argument("--eval_batch_size", default=64, type=int)
     parser.add_argument("--n_best_size", default=20, type=int)
     parser.add_argument("--max_answer_length", default=30, type=int)
-    parser.add_argument("--eval_steps", default=1948, type=int)
+    parser.add_argument("--eval_steps", default=2500, type=int)
     parser.add_argument('--seed', type=int, default=556)
     parser.add_argument('--lr', type=float, default=3e-5)
     parser.add_argument('--dropout', type=float, default=0.1)
@@ -142,19 +142,19 @@ if __name__ == '__main__':
     parser.add_argument("--weight_decay_rate", default=0.01, type=float, help='weight_decay_rate')
     parser.add_argument("--float16", default=True, type=bool)
 
-    parser.add_argument("--bert_config_file", default='check_points/bert-large-wwm-finetuned-squad', type=str)
-    parser.add_argument("--init_restore_dir", default='check_points/bert-large-wwm-finetuned-squad', type=str)
-    parser.add_argument("--output_dir", default='check_points/bert-large-tfidf-600-top8-V4', type=str)
+    parser.add_argument("--bert_config_file", default='albert_xxlarge', type=str)
+    parser.add_argument("--init_restore_dir", default='albert_xxlarge', type=str)
+    parser.add_argument("--output_dir", default='check_points/albert-xxlarge-tfidf-600-top8-V0', type=str)
     parser.add_argument("--log_file", default='log.txt', type=str)
     parser.add_argument("--setting_file", default='setting.txt', type=str)
 
     parser.add_argument("--predict_file", default='data/simplified-nq-dev.jsonl', type=str)
-    parser.add_argument("--train_feat_dir", default='dataset/train_data_maxlen512_tfidf_ls_features.bin', type=str)
-    parser.add_argument("--dev_feat_dir", default='dataset/dev_data_maxlen512_tfidf_ls_features.bin', type=str)
+    parser.add_argument("--train_feat_dir", default='dataset/train_data_maxlen512_albert_tfidf_ls_features.bin', type=str)
+    parser.add_argument("--dev_feat_dir", default='dataset/dev_data_maxlen512_albert_tfidf_ls_features.bin', type=str)
 
     args = parser.parse_args()
-    args.bert_config_file = os.path.join(args.bert_config_file, 'config.json')
-    args.init_restore_dir = os.path.join(args.init_restore_dir, 'pytorch_model.bin')
+    args.bert_config_file = os.path.join(args.bert_config_file, 'albert_config.json')
+    args.init_restore_dir = os.path.join(args.init_restore_dir, 'albert_xxlarge_squad_extend.pth')
     args = check_args(args)
     if os.path.exists(args.log_file):
         os.remove(args.log_file)
@@ -191,8 +191,8 @@ if __name__ == '__main__':
     print('total steps:', total_steps)
     print('warmup steps:', int(args.warmup_rate * total_steps))
 
-    bert_config = BertConfig.from_json_file(args.bert_config_file)
-    model = BertJointForNQ2(bert_config, long_n_top=5, short_n_top=5)
+    bert_config = AlbertConfig.from_json_file(args.bert_config_file)
+    model = AlBertJointForNQ(bert_config, long_n_top=5, short_n_top=5)
     utils.torch_show_all_params(model)
     utils.torch_init_model(model, args.init_restore_dir)
     if args.float16:

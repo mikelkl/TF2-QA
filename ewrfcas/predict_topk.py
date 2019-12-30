@@ -1,6 +1,6 @@
 import torch
 import argparse
-from modeling import BertJointForNQ, BertConfig
+from albert_modeling import AlBertJointForNQ, AlbertConfig
 from torch.utils.data import TensorDataset, SequentialSampler, DataLoader
 import utils
 from tqdm import tqdm
@@ -9,17 +9,21 @@ import json
 import collections
 import pickle
 import pandas as pd
-from preprocess import InputFeatures, NqExample
+from albert_preprocess import InputLSFeatures
 from utils_nq import read_candidates_from_one_split, compute_pred_dict
 from nq_eval import get_metrics_as_dict
 
-RawResult = collections.namedtuple(
-    "RawResult",
-    ["unique_id", "start_logits", "end_logits", "answer_type_logits"])
+RawResult = collections.namedtuple("RawResult",
+                                   ["unique_id",
+                                    "long_start_topk_logits", "long_start_topk_index",
+                                    "long_end_topk_logits", "long_end_topk_index",
+                                    "short_start_topk_logits", "short_start_topk_index",
+                                    "short_end_topk_logits", "short_end_topk_index",
+                                    "answer_type_logits"])
 
 
-def load_and_cache_examples(cached_features_example_file, output_features=False, evaluate=False):
-    features = torch.load(cached_features_example_file)
+def load_cached_data(feature_dir, output_features=False, evaluate=False):
+    features = torch.load(feature_dir)
 
     # Convert to Tensors and build dataset
     all_input_ids = torch.tensor([f.input_ids for f in features], dtype=torch.long)
@@ -29,9 +33,15 @@ def load_and_cache_examples(cached_features_example_file, output_features=False,
         all_example_index = torch.arange(all_input_ids.size(0), dtype=torch.long)
         dataset = TensorDataset(all_input_ids, all_input_mask, all_segment_ids, all_example_index)
     else:
-        all_start_positions = torch.tensor([f.start_position for f in features], dtype=torch.long)
-        all_end_positions = torch.tensor([f.end_position for f in features], dtype=torch.long)
-        dataset = TensorDataset(all_input_ids, all_input_mask, all_segment_ids, all_start_positions, all_end_positions)
+        all_long_start_positions = torch.tensor([f.long_start_position for f in features], dtype=torch.long)
+        all_long_end_positions = torch.tensor([f.long_end_position for f in features], dtype=torch.long)
+        all_short_start_positions = torch.tensor([f.short_start_position for f in features], dtype=torch.long)
+        all_short_end_positions = torch.tensor([f.short_end_position for f in features], dtype=torch.long)
+        all_answer_types = torch.tensor([f.answer_type for f in features], dtype=torch.long)
+        dataset = TensorDataset(all_input_ids, all_input_mask, all_segment_ids,
+                                all_long_start_positions, all_long_end_positions,
+                                all_short_start_positions, all_short_end_positions,
+                                all_answer_types)
 
     if output_features:
         return dataset, features
@@ -54,8 +64,8 @@ def make_submission(output_prediction_file, output_dir):
         if entry['answer_type'] == 0:
             return ""
 
-        if entry["short_answers_score"] < 1.5:
-            return ""
+        # if entry["short_answers_score"] < 1.5:
+        #     return ""
 
         if entry["yes_no_answer"] != "NONE":
             return entry["yes_no_answer"]
@@ -70,8 +80,8 @@ def make_submission(output_prediction_file, output_dir):
         if entry['answer_type'] == 0:
             return ''
 
-        if entry["long_answer_score"] < 1.5:
-            return ""
+        # if entry["long_answer_score"] < 1.5:
+        #     return ""
 
         answer = []
         if entry["long_answer"]["start_token"] > -1:
@@ -105,21 +115,20 @@ def make_submission(output_prediction_file, output_dir):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument("--gpu_ids", default="0,1,2,3", type=str)
+    parser.add_argument("--gpu_ids", default="0,1,2,3,4,5,6,7", type=str)
     parser.add_argument("--eval_batch_size", default=128, type=int)
     parser.add_argument("--n_best_size", default=20, type=int)
     parser.add_argument("--max_answer_length", default=30, type=int)
-    parser.add_argument("--short_th_range", default=[0.25, 0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0], type=list)
     parser.add_argument("--float16", default=True, type=bool)
     parser.add_argument("--bert_config_file", default=None, type=str)
     parser.add_argument("--init_restore_dir", default=None, type=str)
     parser.add_argument("--predict_file", default='data/simplified-nq-test.jsonl', type=str)
-    parser.add_argument("--output_dir", default='check_points/bert-large-wwm-finetuned-squad/checkpoint-41224',
+    parser.add_argument("--output_dir", default='check_points/albert-xxlarge-tfidf-600-top8-V0',
                         type=str)
-    parser.add_argument("--predict_feat", default='dataset/test_data_maxlen512_tfidf_features.bin',
+    parser.add_argument("--predict_feat", default='dataset/test_data_maxlen512_albert_tfidf_ls_features.bin',
                         type=str)
     args = parser.parse_args()
-    args.bert_config_file = os.path.join('check_points/bert-large-wwm-finetuned-squad', 'config.json')
+    args.bert_config_file = os.path.join('albert_xxlarge', 'albert_config.json')
     args.init_restore_dir = os.path.join(args.output_dir, 'best_checkpoint.pth')
 
     os.environ["CUDA_VISIBLE_DEVICES"] = args.gpu_ids
@@ -128,8 +137,8 @@ if __name__ == '__main__':
     print("device %s n_gpu %d" % (device, n_gpu))
     print("device: {} n_gpu: {} 16-bits training: {}".format(device, n_gpu, args.float16))
 
-    bert_config = BertConfig.from_json_file(args.bert_config_file)
-    model = BertJointForNQ(bert_config)
+    bert_config = AlbertConfig.from_json_file(args.bert_config_file)
+    model = AlBertJointForNQ(bert_config, long_n_top=5, short_n_top=5)
     utils.torch_show_all_params(model)
     utils.torch_init_model(model, args.init_restore_dir)
     if args.float16:
@@ -145,8 +154,7 @@ if __name__ == '__main__':
     #     print('Thereshold:', th)
     #     print(json.dumps(results, indent=2))
 
-    dataset, features = load_and_cache_examples(cached_features_example_file=args.predict_feat,
-                                                output_features=True, evaluate=True)
+    dataset, features = load_cached_data(feature_dir=args.predict_feat, output_features=True, evaluate=True)
 
     eval_sampler = SequentialSampler(dataset)
     eval_dataloader = DataLoader(dataset, sampler=eval_sampler, batch_size=args.eval_batch_size)
@@ -171,9 +179,17 @@ if __name__ == '__main__':
             eval_feature = features[example_index.item()]
             unique_id = str(eval_feature.unique_id)
             result = RawResult(unique_id=unique_id,
-                               start_logits=to_list(outputs[0][i]),
-                               end_logits=to_list(outputs[1][i]),
-                               answer_type_logits=to_list(outputs[2][i]))
+                               # [topk]
+                               long_start_topk_logits=outputs['long_start_topk_logits'][i].cpu().numpy(),
+                               long_start_topk_index=outputs['long_start_topk_index'][i].cpu().numpy(),
+                               long_end_topk_logits=outputs['long_end_topk_logits'][i].cpu().numpy(),
+                               long_end_topk_index=outputs['long_end_topk_index'][i].cpu().numpy(),
+                               # [topk, topk]
+                               short_start_topk_logits=outputs['short_start_topk_logits'][i].cpu().numpy(),
+                               short_start_topk_index=outputs['short_start_topk_index'][i].cpu().numpy(),
+                               short_end_topk_logits=outputs['short_end_topk_logits'][i].cpu().numpy(),
+                               short_end_topk_index=outputs['short_end_topk_index'][i].cpu().numpy(),
+                               answer_type_logits=to_list(outputs['answer_type_logits'][i]))
             all_results.append(result)
 
     pickle.dump(all_results, open(os.path.join(args.output_dir, 'RawResults_test.pkl'), 'wb'))
@@ -184,7 +200,8 @@ if __name__ == '__main__':
     print("Compute_pred_dict")
     nq_pred_dict = compute_pred_dict(candidates_dict, features,
                                      [r._asdict() for r in all_results],
-                                     args.n_best_size, args.max_answer_length)
+                                     args.n_best_size, args.max_answer_length, topk_pred=True,
+                                     long_n_top=5, short_n_top=5)
 
     output_prediction_file = os.path.join(args.output_dir, 'predictions_test.json')
     print("Saving predictions to", output_prediction_file)

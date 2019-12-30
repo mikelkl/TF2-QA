@@ -881,6 +881,30 @@ def compute_predictions(example, n_best_size=10, max_answer_length=30):
     else:
         yes_no_answer = "NONE"
 
+    # summary.predicted_label = {
+    #     "example_id": int(example.example_id),
+    #     "long_answer": {
+    #         "start_token": int(long_span.start_token_idx) if answer_type != AnswerType.UNKNOWN else -1,
+    #         "end_token": int(long_span.end_token_idx) if answer_type != AnswerType.UNKNOWN else -1,
+    #         "start_byte": -1,
+    #         "end_byte": -1
+    #     },
+    #     "long_answer_score": float(score),
+    #     "short_answers": [{
+    #         "start_token": int(
+    #             short_span.start_token_idx) if answer_type == AnswerType.SHORT else -1,
+    #         "end_token": int(
+    #             short_span.end_token_idx) if answer_type == AnswerType.SHORT else -1,
+    #         "start_byte": -1,
+    #         "end_byte": -1
+    #     }],
+    #     "short_answers_score": float(score),
+    #     "yes_no_answer": yes_no_answer,
+    #     "answer_type_logits": summary.answer_type_logits.tolist(),
+    #     "answer_type": answer_type
+    # }
+
+    #######fake predict######
     summary.predicted_label = {
         "example_id": int(example.example_id),
         "long_answer": {
@@ -891,15 +915,13 @@ def compute_predictions(example, n_best_size=10, max_answer_length=30):
         },
         "long_answer_score": float(score),
         "short_answers": [{
-            "start_token": int(
-                short_span.start_token_idx) if answer_type == AnswerType.SHORT else -1,
-            "end_token": int(
-                short_span.end_token_idx) if answer_type == AnswerType.SHORT else -1,
+            "start_token": int(short_span.start_token_idx),
+            "end_token": int(short_span.end_token_idx),
             "start_byte": -1,
             "end_byte": -1
         }],
         "short_answers_score": float(score),
-        "yes_no_answer": yes_no_answer,
+        "yes_no_answer": 'NONE',  # yes_no_answer,
         "answer_type_logits": summary.answer_type_logits.tolist(),
         "answer_type": answer_type
     }
@@ -1052,6 +1074,10 @@ def compute_pred_dict(candidates_dict, dev_features, raw_results,
             ('answer_type_logits', [2.1452865600585938, ...])]))
     :return: dict{int:dict}
     """
+    # examples_by_id = [(str(k), 0, v) for k, v in candidates_dict.items()]
+    # raw_results_by_id = [(str(res["unique_id"]), 1, res) for res in raw_results]
+    # features_by_id = [(str(d.unique_id), 2, d) for d in dev_features]
+
     examples_by_id = [(str(k), 0, v) for k, v in candidates_dict.items()]
     raw_results_by_id = [(str(res["unique_id"]), 1, res) for res in raw_results]
     features_by_id = [(str(d.unique_id), 2, d) for d in dev_features]
@@ -1062,6 +1088,18 @@ def compute_pred_dict(candidates_dict, dev_features, raw_results,
     # Put example, result and feature for identical unique_id adjacent
     # E.g [(-9198586108074363474, 0, `example`), (-9198586108074363474, 0, `result`),
     # (-9198586108074363474, 0, `feature`), ...]
+    # merged = {}
+    # for idx, type_, datum in examples_by_id:
+    #     merged[idx] = {'example': datum}
+    # for idx, type_, datum in raw_results_by_id:
+    #     merged[str(datum['example_id'])]['results'] = datum
+    # for idx, type_, datum in features_by_id:
+    #     merged[str(datum.example_index)]['features'] = datum
+    #
+    # for idx in merged:
+    #     examples.append(EvalExample(idx, merged[idx]['example']))
+    #     examples[-1].features[idx] = merged[idx]['features']
+    #     examples[-1].results[idx] = merged[idx]['results']
     merged = sorted(examples_by_id + raw_results_by_id + features_by_id)
     logger.info('done.')
     for idx, type_, datum in merged:

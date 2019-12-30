@@ -13,47 +13,48 @@ from utils_nq import read_candidates_from_one_split, compute_pred_dict, InputFea
 
 RawResult = collections.namedtuple(
     "RawResult",
-    ["unique_id", "start_logits", "end_logits", "answer_type_logits"])
+    ["unique_id", "example_id", "start_logits", "end_logits", "answer_type_logits"])
 
 
 def evaluate(model, args, dev_features, device, global_steps):
     # Eval!
     print("***** Running evaluation *****")
-    all_results = []
-    for batch in tqdm(eval_dataloader, desc="Evaluating"):
-        model.eval()
-        batch = tuple(t.to(device) for t in batch)
-        with torch.no_grad():
-            input_ids, input_mask, segment_ids, example_indices = batch
-            inputs = {'input_ids': input_ids,
-                      'attention_mask': input_mask,
-                      'token_type_ids': segment_ids}
-            outputs = model(**inputs)
+    # all_results = []
+    # for batch in tqdm(eval_dataloader, desc="Evaluating"):
+    #     model.eval()
+    #     batch = tuple(t.to(device) for t in batch)
+    #     with torch.no_grad():
+    #         input_ids, input_mask, segment_ids, example_indices = batch
+    #         inputs = {'input_ids': input_ids,
+    #                   'attention_mask': input_mask,
+    #                   'token_type_ids': segment_ids}
+    #         outputs = model(**inputs)
+    #
+    #     for i, example_index in enumerate(example_indices):
+    #         eval_feature = dev_features[example_index.item()]
+    #         unique_id = str(eval_feature.unique_id)
+    #         result = RawResult(unique_id=unique_id,
+    #                            example_id=eval_feature.example_index,
+    #                            start_logits=to_list(outputs[0][i]),
+    #                            end_logits=to_list(outputs[1][i]),
+    #                            answer_type_logits=to_list(outputs[2][i]))
+    #         all_results.append(result)
 
-        for i, example_index in enumerate(example_indices):
-            eval_feature = dev_features[example_index.item()]
-            unique_id = str(eval_feature.unique_id)
-            result = RawResult(unique_id=unique_id,
-                               start_logits=to_list(outputs[0][i]),
-                               end_logits=to_list(outputs[1][i]),
-                               answer_type_logits=to_list(outputs[2][i]))
-            all_results.append(result)
-
-    pickle.dump(all_results, open(os.path.join(args.output_dir, 'RawResults.pkl'), 'wb'))
+    # pickle.dump(all_results, open(os.path.join(args.output_dir, 'RawResults.pkl'), 'wb'))
     # all_results = pickle.load(open(os.path.join(args.output_dir, 'RawResults.pkl'), 'rb'))
-
-    # print("Going to candidates file")
-    candidates_dict = read_candidates_from_one_split(args.predict_file)
-
-    # print("Compute_pred_dict")
-    nq_pred_dict = compute_pred_dict(candidates_dict, dev_features,
-                                     [r._asdict() for r in all_results],
-                                     args.n_best_size, args.max_answer_length)
-
+    #
+    # # print("Going to candidates file")
+    # candidates_dict = read_candidates_from_one_split(args.predict_file)
+    #
+    # # print("Compute_pred_dict")
+    # nq_pred_dict = compute_pred_dict(candidates_dict, dev_features,
+    #                                  [r._asdict() for r in all_results],
+    #                                  args.n_best_size, args.max_answer_length)
+    #
     output_prediction_file = os.path.join(args.output_dir, 'predictions' + str(global_steps) + '.json')
-    # print("Saving predictions to", output_prediction_file)
-    with open(output_prediction_file, 'w') as f:
-        json.dump({'predictions': list(nq_pred_dict.values())}, f)
+    # # print("Saving predictions to", output_prediction_file)
+    # with open(output_prediction_file, 'w') as f:
+    #     json.dump({'predictions': list(nq_pred_dict.values())}, f)
 
     # print("Computing f1 score")
     results = get_metrics_as_dict(args.predict_file, output_prediction_file)
@@ -67,6 +68,8 @@ def evaluate(model, args, dev_features, device, global_steps):
 
 def load_cached_data(feature_dir, output_features=False, evaluate=False):
     features = torch.load(feature_dir)
+    if type(features) == tuple:
+        features = features[0]
 
     # Convert to Tensors and build dataset
     all_input_ids = torch.tensor([f.input_ids for f in features], dtype=torch.long)
@@ -93,7 +96,7 @@ def to_list(tensor):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument("--gpu_ids", default="0,1,2,3,4,5,6,7", type=str)
+    parser.add_argument("--gpu_ids", default="0,1,2,3", type=str)
     parser.add_argument("--train_epochs", default=3, type=int)
     parser.add_argument("--train_batch_size", default=48, type=int)
     parser.add_argument("--eval_batch_size", default=128, type=int)
@@ -110,13 +113,16 @@ if __name__ == '__main__':
     parser.add_argument("--float16", default=True, type=bool)
 
     parser.add_argument("--bert_config_file", default='check_points/bert-large-wwm-finetuned-squad', type=str)
-    parser.add_argument("--init_restore_dir", default='check_points/bert-large-wwm-finetuned-squad/checkpoint-41224', type=str)
-    parser.add_argument("--output_dir", default='check_points/bert-large-wwm-finetuned-squad/checkpoint-41224', type=str)
+    parser.add_argument("--init_restore_dir", default='check_points/bert-large-wwm-finetuned-squad/checkpoint-41224',
+                        type=str)
+    parser.add_argument("--output_dir", default='check_points/bert-large-wwm-finetuned-squad/checkpoint-41224',
+                        type=str)
     parser.add_argument("--log_file", default='log.txt', type=str)
 
     parser.add_argument("--predict_file", default='data/simplified-nq-dev.jsonl', type=str)
     parser.add_argument("--train_feat_dir", default='dataset/train_data_maxlen512_tfidf_features.bin', type=str)
-    parser.add_argument("--dev_feat_dir", default='dataset/dev_data_maxlen512_tfidf_features.bin', type=str)
+    # dev_data_maxlen512_tfidf_features.bin
+    parser.add_argument("--dev_feat_dir", default='dataset/cached_dev_pytorch_model.bin_512', type=str)
 
     args = parser.parse_args()
     args.bert_config_file = os.path.join(args.bert_config_file, 'config.json')
