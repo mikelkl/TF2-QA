@@ -357,7 +357,7 @@ def predict(args, model, tokenizer, prefix=""):
         json.dump(predictions_json, f, indent=4)
 
 
-def make_submission(output_prediction_file, output_dir):
+def make_submission(output_prediction_file, output_dir, long_thresh=-float("inf"), short_thresh=-float("inf")):
     logger.info("***** Making submmision *****")
     test_answers_df = pd.read_json(output_prediction_file)
 
@@ -368,12 +368,10 @@ def make_submission(output_prediction_file, output_dir):
         """
         if entry['answer_type'] == 0:
             return ""
-        if entry["short_answers_score"] < 1.5:
-            return ""
-
         if entry["yes_no_answer"] != "NONE":
             return entry["yes_no_answer"]
-
+        if entry["short_answers_score"] < short_thresh:
+            return ""
         answer = []
         for short_answer in entry["short_answers"]:
             if short_answer["start_token"] > -1:
@@ -383,7 +381,7 @@ def make_submission(output_prediction_file, output_dir):
     def create_long_answer(entry):
         if entry['answer_type'] == 0:
             return ''
-        if entry["long_answer_score"] < 1.5:
+        if entry["long_answer_score"] < long_thresh:
             return ""
 
         answer = []
@@ -413,7 +411,13 @@ def make_submission(output_prediction_file, output_dir):
     sample_submission.loc[
         sample_submission["example_id"].str.contains("_short"), "PredictionString"] = short_prediction_strings
 
-    sample_submission.to_csv(os.path.join(output_dir, "submission.csv"), index=False)
+    postfix = os.path.basename(output_prediction_file)
+    postfix = os.path.splitext(postfix)[0]
+    if long_thresh != -float("inf"):
+        postfix = "{}_LT{:.4f}".format(postfix, long_thresh)
+    if short_thresh != -float("inf"):
+        postfix = "{}_ST{:.4f}".format(postfix, short_thresh)
+    sample_submission.to_csv(os.path.join(output_dir, "submission_{}.csv".format(postfix)), index=False)
 
 
 def load_tfrecord(filename, evaluate=False):
@@ -784,5 +788,8 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
-    # make_submission("../output/models/bert-large-uncased-whole-word-masking-finetuned-squad/predictions_12192019.json", "../output/models/bert-large-uncased-whole-word-masking-finetuned-squad/")
+    # main()
+    make_submission("../output/models/albert-xxlarge-tfidf-600-top8-V0/test_predictions99998.json", "/users/liukanglong/", 0.5714843749999998, -0.3722656249999998)
+    make_submission("../output/models/albert-xxlarge-tfidf-600-top8-V0/test_predictions99998.json", "/users/liukanglong/")
+    make_submission("../output/models/albert-xxlarge-tfidf-600-top8-V0/test_predictions99999.json", "/users/liukanglong/", 3.05078125, 0.7734375)
+    make_submission("../output/models/albert-xxlarge-tfidf-600-top8-V0/test_predictions99999.json", "/users/liukanglong/")

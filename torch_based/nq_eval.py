@@ -351,7 +351,76 @@ def print_r_at_p_table(answer_stats):
             target, recall, precision, row))
 
 
-def get_metrics_as_dict(gold_path, prediction_path):
+def find_best_thresh(gold_path, prediction_path):
+    """
+    Args:
+        gold_path: str
+        prediction_path: str
+
+    Returns:
+        metrics: collections.OrderedDict
+    """
+
+    nq_gold_dict = util.read_simplified_annotation(gold_path)
+    nq_pred_dict = util.read_prediction_json(prediction_path)
+    long_answer_stats, short_answer_stats = score_answers(
+        nq_gold_dict, nq_pred_dict)
+
+    def _find_best_thresh(answer_stats, prefix=''):
+        """
+        Args:
+            answer_stats: list
+            prefix: str
+
+        Returns:
+            metrics: collections.OrderedDict
+        """
+        best_f1 = best_p = best_r = 0
+        best_thresh = 0
+        for _, _, _, thresh in answer_stats:
+            tp = fp = fn = 0.
+            for has_gold, has_pred, is_correct, score in answer_stats:
+                if score < thresh:
+                    has_pred = False
+                # !!!!!!!!!!!!!
+                # is_correct is False as long as gold is null span
+                if has_gold and has_pred and is_correct:
+                    # TP = the predicted indices match one of the possible ground truth indices
+                    tp += 1
+                elif has_pred and not is_correct:
+                    # FP = the predicted indices do NOT match one of the possible ground truth indices,
+                    # OR a prediction has been made where no ground truth exists
+                    fp += 1
+                elif not has_pred and has_gold:
+                    # FN = no prediction has been made where a ground truth exists
+                    fn += 1
+
+            precision = safe_divide(tp, tp + fp)
+            recall = safe_divide(tp, tp + fn)
+            f1 = safe_divide(2 * tp, 2 * tp + fp + fn)
+            if f1 > best_f1:
+                best_f1 = f1
+                best_p = precision
+                best_r = recall
+                best_thresh = thresh
+
+        metrics = OrderedDict({
+            'f1': best_f1,
+            'precision': best_p,
+            'recall': best_r,
+            "best_thresh": best_thresh
+        })
+
+        # Add prefix before returning.
+        return dict([(prefix + k, v) for k, v in six.iteritems(metrics)])
+
+    metrics = _find_best_thresh(long_answer_stats, 'long-')
+    metrics.update(_find_best_thresh(short_answer_stats, 'short-'))
+    metrics.update(_find_best_thresh(long_answer_stats + short_answer_stats, 'all-'))
+
+    return metrics
+
+def get_metrics_as_dict(gold_path, prediction_path, long_thresh=-float("inf"), short_thresh=-float("inf")):
     """Library version of the end-to-end evaluation.
 
     Arguments:
@@ -368,19 +437,51 @@ def get_metrics_as_dict(gold_path, prediction_path):
     long_answer_stats, short_answer_stats = score_answers(
         nq_gold_dict, nq_pred_dict)
 
-    return get_metrics_with_answer_stats(long_answer_stats, short_answer_stats)
+    return get_metrics_with_answer_stats(long_answer_stats, short_answer_stats, long_thresh, short_thresh)
 
+def get_metrics_with_answer_stats(long_answer_stats, short_answer_stats, long_thresh=-float("inf"), short_thresh=-float("inf")):
+    """
+    Generate metrics dict using long and short answer stats.
+    Args:
+        long_answer_stats: list
+        short_answer_stats: list
+        long_thresh: float
+        short_thresh: float
 
-def get_metrics_with_answer_stats(long_answer_stats, short_answer_stats):
-    """Generate metrics dict using long and short answer stats."""
+    Returns:
+        metrics: collections.OrderedDict
+    """
 
-    def _get_metric_dict(answer_stats, prefix=''):
-        """Compute all metrics for a set of answer statistics."""
+    def _get_metric_dict(answer_stats, prefix='', thresh=-float("inf")):
+        """
+        Compute all metrics for a set of answer statistics.
+        Args:
+            answer_stats: list
+            prefix: str
+            thresh: float or list
+
+        Returns:
+            metrics: collections.OrderedDict
+        """
+        boundary = len(answer_stats)
+        if type(thresh) == float:
+            thresh = [thresh]
+        if len(thresh) == 2:
+            boundary = boundary / 2
+        elif len(thresh) > 2:
+            raise ValueError("thresh cannot contains more than 2 value!")
+
         tp = fp = fn = 0.
-        for has_gold, has_pred, is_correct, _ in answer_stats:
+        for i, (has_gold, has_pred, is_correct, score) in enumerate(answer_stats):
+            if i < boundary:
+                if score < thresh[0]:
+                    has_pred = False
+            else:
+                if score < thresh[1]:
+                    has_pred = False
             # !!!!!!!!!!!!!
             # is_correct is False as long as gold is null span
-            if has_gold and is_correct:
+            if has_gold and has_pred and is_correct:
                 # TP = the predicted indices match one of the possible ground truth indices
                 tp += 1
             elif has_pred and not is_correct:
@@ -398,13 +499,34 @@ def get_metrics_with_answer_stats(long_answer_stats, short_answer_stats):
         metrics = OrderedDict({
             'f1': f1,
             'precision': precision,
-            'recall': recall,
+            'recall': recall
         })
 
         # Add prefix before returning.
         return dict([(prefix + k, v) for k, v in six.iteritems(metrics)])
 
-    metrics = _get_metric_dict(long_answer_stats, 'long-')
-    metrics.update(_get_metric_dict(short_answer_stats, 'short-'))
-    metrics.update(_get_metric_dict(long_answer_stats + short_answer_stats, 'all-'))
+    metrics = _get_metric_dict(long_answer_stats, 'long-', long_thresh)
+    metrics.update(_get_metric_dict(short_answer_stats, 'short-', short_thresh))
+    metrics.update(_get_metric_dict(long_answer_stats + short_answer_stats, 'all-', [long_thresh, short_thresh]))
     return metrics
+
+if __name__ == "__main__":
+    from pprint import pprint
+
+    predict_file = "../input/tensorflow2-question-answering/simplified-nq-dev.jsonl"
+    output_prediction_file = "../output/models/albert-xxlarge-tfidf-600-top8-V0/predictions99997.json"
+    print("Tuning for:", output_prediction_file)
+    print('*' * 20)
+    print('Metrics before threshold:')
+    metrics = get_metrics_as_dict(predict_file, output_prediction_file)
+    pprint(metrics)
+
+    print('*' * 20)
+    print('Metrics after threshold:')
+    metrics_thresh = find_best_thresh(predict_file, output_prediction_file)
+    pprint(metrics_thresh)
+
+    print('*' * 20)
+    print('Metrics with best long/short threshold:')
+    metrics = get_metrics_as_dict(predict_file, output_prediction_file, metrics_thresh['long-best_thresh'], metrics_thresh["short-best_thresh"])
+    pprint(metrics)
