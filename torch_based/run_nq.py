@@ -368,7 +368,7 @@ def make_submission(output_prediction_file, output_dir):
         """
         if entry['answer_type'] == 0:
             return ""
-        if entry["short_answers_score"] < 1.5:
+        if entry["short_answers_score"] < 25.46875:
             return ""
 
         if entry["yes_no_answer"] != "NONE":
@@ -383,7 +383,7 @@ def make_submission(output_prediction_file, output_dir):
     def create_long_answer(entry):
         if entry['answer_type'] == 0:
             return ''
-        if entry["long_answer_score"] < 1.5:
+        if entry["long_answer_score"] < 18.78125:
             return ""
 
         answer = []
@@ -785,4 +785,4 @@ def main():
 
 if __name__ == "__main__":
     main()
-    # make_submission("../output/models/bert-large-uncased-whole-word-masking-finetuned-squad/predictions_12192019.json", "../output/models/bert-large-uncased-whole-word-masking-finetuned-squad/")
+    # make_submission("../output/models/albert-xxlarge-tfidf-600-top8-V0/predictions_test.json", "../output/models/albert-xxlarge-tfidf-600-top8-V0/")
