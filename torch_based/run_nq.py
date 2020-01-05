@@ -357,7 +357,7 @@ def predict(args, model, tokenizer, prefix=""):
         json.dump(predictions_json, f, indent=4)
 
 
-def make_submission(output_prediction_file, output_dir):
+def make_submission(output_prediction_file, output_dir, long_thresh=-float("inf"), short_thresh=-float("inf")):
     logger.info("***** Making submmision *****")
     test_answers_df = pd.read_json(output_prediction_file)
 
@@ -366,14 +366,12 @@ def make_submission(output_prediction_file, output_dir):
         :param entry: dict
         :return: str
         """
-        if entry['answer_type'] == 0:
-            return ""
-        if entry["short_answers_score"] < 1.5:
-            return ""
-
+        # if entry['answer_type'] == 0:
+        #     return ""
         if entry["yes_no_answer"] != "NONE":
             return entry["yes_no_answer"]
-
+        if entry["short_answers_score"] < short_thresh:
+            return ""
         answer = []
         for short_answer in entry["short_answers"]:
             if short_answer["start_token"] > -1:
@@ -381,9 +379,9 @@ def make_submission(output_prediction_file, output_dir):
         return " ".join(answer)
 
     def create_long_answer(entry):
-        if entry['answer_type'] == 0:
-            return ''
-        if entry["long_answer_score"] < 1.5:
+        # if entry['answer_type'] == 0:
+        #     return ''
+        if entry["long_answer_score"] < long_thresh:
             return ""
 
         answer = []
@@ -784,5 +782,5 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
-    # make_submission("../output/models/bert-large-uncased-whole-word-masking-finetuned-squad/predictions_12192019.json", "../output/models/bert-large-uncased-whole-word-masking-finetuned-squad/")
+    # main()
+    make_submission("../output/models/albert-xxlarge-tfidf-600-top8-V0/test_predictions99997.json", "/users/liukanglong/", 0.5714843749999998, -0.3722656249999998)
