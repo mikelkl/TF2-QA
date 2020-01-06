@@ -881,30 +881,6 @@ def compute_predictions(example, n_best_size=10, max_answer_length=30):
     else:
         yes_no_answer = "NONE"
 
-    # summary.predicted_label = {
-    #     "example_id": int(example.example_id),
-    #     "long_answer": {
-    #         "start_token": int(long_span.start_token_idx) if answer_type != AnswerType.UNKNOWN else -1,
-    #         "end_token": int(long_span.end_token_idx) if answer_type != AnswerType.UNKNOWN else -1,
-    #         "start_byte": -1,
-    #         "end_byte": -1
-    #     },
-    #     "long_answer_score": float(score),
-    #     "short_answers": [{
-    #         "start_token": int(
-    #             short_span.start_token_idx) if answer_type == AnswerType.SHORT else -1,
-    #         "end_token": int(
-    #             short_span.end_token_idx) if answer_type == AnswerType.SHORT else -1,
-    #         "start_byte": -1,
-    #         "end_byte": -1
-    #     }],
-    #     "short_answers_score": float(score),
-    #     "yes_no_answer": yes_no_answer,
-    #     "answer_type_logits": summary.answer_type_logits.tolist(),
-    #     "answer_type": answer_type
-    # }
-
-    #######fake predict######
     summary.predicted_label = {
         "example_id": int(example.example_id),
         "long_answer": {
@@ -915,13 +891,15 @@ def compute_predictions(example, n_best_size=10, max_answer_length=30):
         },
         "long_answer_score": float(score),
         "short_answers": [{
-            "start_token": int(short_span.start_token_idx),
-            "end_token": int(short_span.end_token_idx),
+            "start_token": int(
+                short_span.start_token_idx) if answer_type == AnswerType.SHORT else -1,
+            "end_token": int(
+                short_span.end_token_idx) if answer_type == AnswerType.SHORT else -1,
             "start_byte": -1,
             "end_byte": -1
         }],
         "short_answers_score": float(score),
-        "yes_no_answer": 'NONE',  # yes_no_answer,
+        "yes_no_answer": yes_no_answer,
         "answer_type_logits": summary.answer_type_logits.tolist(),
         "answer_type": answer_type
     }
@@ -989,6 +967,8 @@ def compute_topk_predictions(example, long_topk=5, short_topk=5, max_answer_leng
                 rel_short_end_index = token_map[short_end_index] + 1
                 if rel_short_end_index - rel_short_start_index > max_answer_length:
                     continue
+                # if short_start_index < long_start_index or short_end_index > long_end_index:
+                #     continue
 
                 summary = ScoreSummary()
                 summary.long_span_score = (long_start_logits + long_end_logits)
@@ -1014,8 +994,8 @@ def compute_topk_predictions(example, long_topk=5, short_topk=5, max_answer_leng
         # 对于长答案，我们从candidates里选择最接近的一组cand
         min_dis = 99999
         for c in example.candidates:
-            if c['top_level'] is False:
-                continue
+            # if c['top_level'] is False:
+            #     continue
             start = long_span.start_token_idx
             end = long_span.end_token_idx
 
