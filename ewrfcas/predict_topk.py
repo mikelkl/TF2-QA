@@ -1,6 +1,6 @@
 import torch
 import argparse
-from albert_modeling import AlBertJointForNQ, AlbertConfig
+from albert_modeling import AlBertJointForNQ2, AlbertConfig
 from torch.utils.data import TensorDataset, SequentialSampler, DataLoader
 import utils
 from tqdm import tqdm
@@ -115,8 +115,8 @@ def make_submission(output_prediction_file, output_dir):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument("--gpu_ids", default="0,1,2,3,4,5,6,7", type=str)
-    parser.add_argument("--eval_batch_size", default=128, type=int)
+    parser.add_argument("--gpu_ids", default="4,5,6,7", type=str)
+    parser.add_argument("--eval_batch_size", default=64, type=int)
     parser.add_argument("--n_best_size", default=20, type=int)
     parser.add_argument("--max_answer_length", default=30, type=int)
     parser.add_argument("--float16", default=True, type=bool)
@@ -138,7 +138,7 @@ if __name__ == '__main__':
     print("device: {} n_gpu: {} 16-bits training: {}".format(device, n_gpu, args.float16))
 
     bert_config = AlbertConfig.from_json_file(args.bert_config_file)
-    model = AlBertJointForNQ(bert_config, long_n_top=5, short_n_top=5)
+    model = AlBertJointForNQ2(bert_config, long_n_top=5, short_n_top=5)
     utils.torch_show_all_params(model)
     utils.torch_init_model(model, args.init_restore_dir)
     if args.float16:
@@ -146,13 +146,6 @@ if __name__ == '__main__':
     model.to(device)
     if n_gpu > 1:
         model = torch.nn.DataParallel(model)
-
-    # # select the best short th
-    # for th in args.short_th_range:
-    #     output_prediction_file = 'check_points/bert-large-wwm-finetuned-squad/checkpoint-41224/predictions.json'
-    #     results = get_metrics_as_dict(args.predict_file, output_prediction_file)
-    #     print('Thereshold:', th)
-    #     print(json.dumps(results, indent=2))
 
     dataset, features = load_cached_data(feature_dir=args.predict_feat, output_features=True, evaluate=True)
 
