@@ -94,34 +94,32 @@ def evaluate(model, args, dev_features, device, global_steps):
     return results
 
 
-def load_cached_data(feature_dir, train_idx, dev_idx):
+def load_cached_data(feature_dir, output_features=False, evaluate=False, train_idx=None):
     features = torch.load(feature_dir)
-
-    train_features = [f for f in features if f.example_index in train_idx]
-    dev_features = [f for f in features if f.example_index in dev_idx]
+    if train_idx is not None:
+        features = [f for f in features if f.example_index in train_idx]
 
     # Convert to Tensors and build dataset
-    all_input_ids = torch.tensor([f.input_ids for f in train_features], dtype=torch.long)
-    all_input_mask = torch.tensor([f.input_mask for f in train_features], dtype=torch.long)
-    all_segment_ids = torch.tensor([f.segment_ids for f in train_features], dtype=torch.long)
-    all_long_start_positions = torch.tensor([f.long_start_position for f in train_features], dtype=torch.long)
-    all_long_end_positions = torch.tensor([f.long_end_position for f in train_features], dtype=torch.long)
-    all_short_start_positions = torch.tensor([f.short_start_position for f in train_features], dtype=torch.long)
-    all_short_end_positions = torch.tensor([f.short_end_position for f in train_features], dtype=torch.long)
-    all_answer_types = torch.tensor([f.answer_type for f in train_features], dtype=torch.long)
-    train_dataset = TensorDataset(all_input_ids, all_input_mask, all_segment_ids,
-                                  all_long_start_positions, all_long_end_positions,
-                                  all_short_start_positions, all_short_end_positions,
-                                  all_answer_types)
+    all_input_ids = torch.tensor([f.input_ids for f in features], dtype=torch.long)
+    all_input_mask = torch.tensor([f.input_mask for f in features], dtype=torch.long)
+    all_segment_ids = torch.tensor([f.segment_ids for f in features], dtype=torch.long)
+    if evaluate:
+        all_example_index = torch.arange(all_input_ids.size(0), dtype=torch.long)
+        dataset = TensorDataset(all_input_ids, all_input_mask, all_segment_ids, all_example_index)
+    else:
+        all_long_start_positions = torch.tensor([f.long_start_position for f in features], dtype=torch.long)
+        all_long_end_positions = torch.tensor([f.long_end_position for f in features], dtype=torch.long)
+        all_short_start_positions = torch.tensor([f.short_start_position for f in features], dtype=torch.long)
+        all_short_end_positions = torch.tensor([f.short_end_position for f in features], dtype=torch.long)
+        all_answer_types = torch.tensor([f.answer_type for f in features], dtype=torch.long)
+        dataset = TensorDataset(all_input_ids, all_input_mask, all_segment_ids,
+                                all_long_start_positions, all_long_end_positions,
+                                all_short_start_positions, all_short_end_positions,
+                                all_answer_types)
 
-    # dev data
-    all_input_ids = torch.tensor([f.input_ids for f in dev_features], dtype=torch.long)
-    all_input_mask = torch.tensor([f.input_mask for f in dev_features], dtype=torch.long)
-    all_segment_ids = torch.tensor([f.segment_ids for f in dev_features], dtype=torch.long)
-    all_example_index = torch.arange(all_input_ids.size(0), dtype=torch.long)
-    dev_dataset = TensorDataset(all_input_ids, all_input_mask, all_segment_ids, all_example_index)
-
-    return train_dataset, dev_dataset, dev_features
+    if output_features:
+        return dataset, features
+    return dataset
 
 
 def to_list(tensor):
@@ -130,11 +128,11 @@ def to_list(tensor):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument("--gpu_ids", default="4,5,6,7", type=str)
+    parser.add_argument("--gpu_ids", default="0,1,2,3,4,5,6,7", type=str)
     parser.add_argument("--fold_num", default=0, type=int)
     parser.add_argument("--fold_file", default='dataset/example_set_5fold.pkl', type=str)
     parser.add_argument("--train_epochs", default=2, type=int)
-    parser.add_argument("--train_batch_size", default=16, type=int)
+    parser.add_argument("--train_batch_size", default=32, type=int)
     parser.add_argument("--eval_batch_size", default=32, type=int)
     parser.add_argument("--n_best_size", default=20, type=int)
     parser.add_argument("--max_answer_length", default=30, type=int)
@@ -185,9 +183,10 @@ if __name__ == '__main__':
         fold_idx = pickle.load(f)
     fold_idx = fold_idx[args.fold_num]
     train_idx = fold_idx['train_idx']
-    dev_idx = fold_idx['dev_idx']
 
-    train_dataset, dev_dataset, dev_features = load_cached_data(args.train_feat_dir, train_idx, dev_idx)
+    train_dataset = load_cached_data(feature_dir=args.train_feat_dir, output_features=False, evaluate=False,
+                                     train_idx=train_idx)
+    dev_dataset, dev_features = load_cached_data(feature_dir=args.dev_feat_dir, output_features=True, evaluate=True)
 
     train_dataloader = DataLoader(train_dataset, shuffle=True, batch_size=args.train_batch_size, drop_last=True)
     eval_dataloader = DataLoader(dev_dataset, shuffle=False, batch_size=args.eval_batch_size)

@@ -1,6 +1,6 @@
 import torch
 import argparse
-from albert_modeling import AlBertJointForNQ, AlbertConfig
+from albert_modeling import AlBertJointForNQ2, AlbertConfig
 from torch.utils.data import TensorDataset, DataLoader
 import utils
 from tqdm import tqdm
@@ -149,7 +149,8 @@ if __name__ == '__main__':
     parser.add_argument("--setting_file", default='setting.txt', type=str)
 
     parser.add_argument("--predict_file", default='data/simplified-nq-dev.jsonl', type=str)
-    parser.add_argument("--train_feat_dir", default='dataset/train_data_maxlen512_albert_tfidf_ls_features.bin', type=str)
+    parser.add_argument("--train_feat_dir", default='dataset/train_data_maxlen512_albert_tfidf_ls_features.bin',
+                        type=str)
     parser.add_argument("--dev_feat_dir", default='dataset/dev_data_maxlen512_albert_tfidf_ls_features.bin', type=str)
 
     args = parser.parse_args()
@@ -192,7 +193,7 @@ if __name__ == '__main__':
     print('warmup steps:', int(args.warmup_rate * total_steps))
 
     bert_config = AlbertConfig.from_json_file(args.bert_config_file)
-    model = AlBertJointForNQ(bert_config, long_n_top=5, short_n_top=5)
+    model = AlBertJointForNQ2(bert_config, long_n_top=5, short_n_top=5)
     utils.torch_show_all_params(model)
     utils.torch_init_model(model, args.init_restore_dir)
     if args.float16:
