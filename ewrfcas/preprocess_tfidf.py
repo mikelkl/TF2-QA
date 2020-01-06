@@ -768,9 +768,9 @@ if __name__ == '__main__':
                         help="NQ json for training. E.g., simplified-nq-train.jsonl")
     parser.add_argument("--dev_file", default='data/simplified-nq-dev.jsonl', type=str,
                         help="NQ json for predictions. E.g., simplified-nq-test.jsonl")
-    parser.add_argument("--test_file", default='data/simplified-nq-test.jsonl', type=str,
+    parser.add_argument("--test_file", default='../input/tensorflow2-question-answering/simplified-nq-test.jsonl', type=str,
                         help="NQ json for predictions. E.g., simplified-nq-test.jsonl")
-    parser.add_argument("--output_dir", default='dataset', type=str)
+    parser.add_argument("--output_dir", default='../input/tensorflow2-question-answering/', type=str)
     parser.add_argument("--max_seq_length", default=512, type=int,
                         help="The maximum total input sequence length after WordPiece tokenization. Sequences "
                              "longer than this will be truncated, and sequences shorter than this will be padded.")
@@ -790,43 +790,44 @@ if __name__ == '__main__':
                         help="If positive, probability of including answers of type `UNKNOWN`.")
     parser.add_argument("--skip_nested_contexts", type=bool, default=True,
                         help="Completely ignore context that are not top level nodes in the page.")
-    parser.add_argument("--do_ls", type=bool, default=True,
+    parser.add_argument("--do_ls", type=bool, default=False,
                         help="Whether to use long short index labels?")
     parser.add_argument("--tfidf_train_file", type=str, default='dataset/train_cand_selected_600.json')
     parser.add_argument("--tfidf_dev_file", type=str, default='dataset/dev_cand_selected_600.json')
-    parser.add_argument("--tfidf_test_file", type=str, default='dataset/test_cand_selected_600.json')
+    parser.add_argument("--tfidf_test_file", type=str, default='../input/tensorflow2-question-answering/test_cand_selected_600_ranking.json')
 
     args = parser.parse_args()
     random.seed(args.seed)
-    tokenizer = FullTokenizer('check_points/bert-large-wwm-finetuned-squad/vocab.txt', do_lower_case=True)
+    tokenizer = FullTokenizer('../output/models/bert-large-uncased-whole-word-masking-finetuned-squad/vocab.txt', do_lower_case=True)
 
     # train preprocess
-    example_output_file = os.path.join(args.output_dir,
-                                       'train_data_maxlen{}_tfidf_examples.json'.format(args.max_seq_length))
-    feature_output_file = os.path.join(args.output_dir,
-                                       'train_data_maxlen{}_tfidf_features.bin'.format(args.max_seq_length))
-    if args.do_ls:
-        feature_output_file = feature_output_file.replace('_features', '_ls_features')
-    if not os.path.exists(feature_output_file):
-        tfidf_dict = json.load(open(args.tfidf_train_file))
-        if os.path.exists(example_output_file):
-            examples = json.load(open(example_output_file))
-        else:
-            examples = read_nq_examples(input_file=args.train_file, tfidf_dict=tfidf_dict, is_training=True, args=args)
-            with open(example_output_file, 'w') as w:
-                json.dump(examples, w)
-        features = convert_examples_to_features(examples=examples, tokenizer=tokenizer, is_training=True, args=args)
-        torch.save(features, feature_output_file)
-
-    # # dev preprocess
     # example_output_file = os.path.join(args.output_dir,
-    #                                    'dev_data_maxlen{}_tfidf_examples.json'.format(args.max_seq_length))
+    #                                    'train_data_maxlen{}_tfidf_examples.json'.format(args.max_seq_length))
     # feature_output_file = os.path.join(args.output_dir,
-    #                                    'dev_data_maxlen{}_tfidf_features.bin'.format(args.max_seq_length))
+    #                                    'train_data_maxlen{}_tfidf_features.bin'.format(args.max_seq_length))
     # if args.do_ls:
     #     feature_output_file = feature_output_file.replace('_features', '_ls_features')
     # if not os.path.exists(feature_output_file):
-    #     tfidf_dict = json.load(open(args.tfidf_dev_file))
+    #     tfidf_dict = json.load(open(args.tfidf_train_file))
+    #     if os.path.exists(example_output_file):
+    #         examples = json.load(open(example_output_file))
+    #     else:
+    #         examples = read_nq_examples(input_file=args.train_file, tfidf_dict=tfidf_dict, is_training=True, args=args)
+    #         with open(example_output_file, 'w') as w:
+    #             json.dump(examples, w)
+    #     features = convert_examples_to_features(examples=examples, tokenizer=tokenizer, is_training=True, args=args)
+    #     torch.save(features, feature_output_file)
+
+    k = 10
+    # dev preprocess
+    # example_output_file = os.path.join(args.output_dir,
+    #                                    'dev_data_maxlen{}_ranking_top{}_examples.json'.format(args.max_seq_length, k))
+    # feature_output_file = os.path.join(args.output_dir,
+    #                                    'dev_data_maxlen{}_ranking_top{}_features.bin'.format(args.max_seq_length, k))
+    # if args.do_ls:
+    #     feature_output_file = feature_output_file.replace('_features', '_ls_features')
+    # if not os.path.exists(feature_output_file):
+    #     tfidf_dict = json.load(open(args.tfidf_dev_file))[str(k)]
     #     if os.path.exists(example_output_file):
     #         examples = json.load(open(example_output_file))
     #     else:
@@ -836,20 +837,20 @@ if __name__ == '__main__':
     #     features = convert_examples_to_features(examples=examples, tokenizer=tokenizer, is_training=False, args=args)
     #     torch.save(features, feature_output_file)
     #
-    # # test preprocess
-    # example_output_file = os.path.join(args.output_dir,
-    #                                    'test_data_maxlen{}_tfidf_examples.json'.format(args.max_seq_length))
-    # feature_output_file = os.path.join(args.output_dir,
-    #                                    'test_data_maxlen{}_tfidf_features.bin'.format(args.max_seq_length))
-    # if args.do_ls:
-    #     feature_output_file = feature_output_file.replace('_features', '_ls_features')
-    # if not os.path.exists(feature_output_file):
-    #     tfidf_dict = json.load(open(args.tfidf_test_file))
-    #     if os.path.exists(example_output_file):
-    #         examples = json.load(open(example_output_file))
-    #     else:
-    #         examples = read_nq_examples(input_file=args.test_file, tfidf_dict=tfidf_dict, is_training=False, args=args)
-    #         with open(example_output_file, 'w') as w:
-    #             json.dump(examples, w)
-    #     features = convert_examples_to_features(examples=examples, tokenizer=tokenizer, is_training=False, args=args)
-    #     torch.save(features, feature_output_file)
+    # test preprocess
+    example_output_file = os.path.join(args.output_dir,
+                                       'test_data_maxlen{}_ranking_top{}_examples.json'.format(args.max_seq_length, k))
+    feature_output_file = os.path.join(args.output_dir,
+                                       'test_data_maxlen{}_top{}_features.bin'.format(args.max_seq_length, k))
+    if args.do_ls:
+        feature_output_file = feature_output_file.replace('_features', '_ls_features')
+    if not os.path.exists(feature_output_file):
+        tfidf_dict = json.load(open(args.tfidf_test_file))[str(k)]
+        if os.path.exists(example_output_file):
+            examples = json.load(open(example_output_file))
+        else:
+            examples = read_nq_examples(input_file=args.test_file, tfidf_dict=tfidf_dict, is_training=False, args=args)
+            with open(example_output_file, 'w') as w:
+                json.dump(examples, w)
+        features = convert_examples_to_features(examples=examples, tokenizer=tokenizer, is_training=False, args=args)
+        torch.save(features, feature_output_file)
