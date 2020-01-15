@@ -789,7 +789,10 @@ def main():
 
 if __name__ == "__main__":
     # main()
-    make_submission("../output/models/albert-xxlarge-tfidf-600-top8-V0/test_predictions99998.json", "/users/liukanglong/", 0.5714843749999998, -0.3722656249999998)
-    make_submission("../output/models/albert-xxlarge-tfidf-600-top8-V0/test_predictions99998.json", "/users/liukanglong/")
-    make_submission("../output/models/albert-xxlarge-tfidf-600-top8-V0/test_predictions99999.json", "/users/liukanglong/", 3.05078125, 0.7734375)
-    make_submission("../output/models/albert-xxlarge-tfidf-600-top8-V0/test_predictions99999.json", "/users/liukanglong/")
+    # make_submission("../output/models/albert-xxlarge-tfidf-600-top8-V0/test_predictions99998.json", "/users/liukanglong/", 0.5714843749999998, -0.3722656249999998)
+    # make_submission("../output/models/albert-xxlarge-tfidf-600-top8-V0/test_predictions99998.json", "/users/liukanglong/")
+    # make_submission("../output/models/albert-xxlarge-tfidf-600-top8-V0/test_predictions99999.json", "/users/liukanglong/", 3.05078125, 0.7734375)
+    # make_submission("../output/models/albert-xxlarge-tfidf-600-top8-V0/test_predictions99999.json", "/users/liukanglong/")
+    # make_submission("../output/models/albert-xxlarge-tfidf-600-top8-V5/test_predictions.json", "/users/liukanglong/")
+    # make_submission("../output/models/albert-xxlarge-V0-ensemble/test_predictions_ensemble.json", "/users/liukanglong/", 8.5826171875, 4.979687500000001)
+    make_submission("../output/models/albert-xxlarge-V0-ensemble/test_predictions_ensemble.json", "/users/liukanglong/", 0.0, 0.0)
