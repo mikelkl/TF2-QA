@@ -97,6 +97,7 @@ from __future__ import print_function
 from collections import OrderedDict, Counter
 import eval_utils as util
 import six
+import json
 
 
 def safe_divide(x, y):
@@ -217,20 +218,9 @@ def score_answers(gold_annotation_dict, pred_dict):
     for example_id in gold_id_set:
         gold = gold_annotation_dict[example_id]
         pred = pred_dict[example_id]
-        # has_short = False
-        # true_short = False
-        # for g in gold:
-        #     for g1 in g.short_answer_span_list:
-        #         if g1.start_token_idx != -1:
-        #             has_short = True
-        #         else:
-        #             continue
-        #         if g1.start_token_idx == pred.short_answer_span_list[0].start_token_idx \
-        #                 and g1.end_token_idx == pred.short_answer_span_list[0].end_token_idx:
-        #             true_short = True
 
-        long_answer_stats.append(score_long_answer(gold, pred))
-        short_answer_stats.append(score_short_answer(gold, pred))
+        long_answer_stats.append(list(score_long_answer(gold, pred)) + [example_id])
+        short_answer_stats.append(list(score_short_answer(gold, pred)) + [example_id])
 
     # use the 'score' column, which is last
     long_answer_stats.sort(key=lambda x: x[-1], reverse=True)
@@ -382,10 +372,17 @@ def get_metrics_as_dict(gold_path, prediction_path):
 def get_metrics_with_answer_stats(long_answer_stats, short_answer_stats):
     """Generate metrics dict using long and short answer stats."""
 
+    long_no_answer_wrong = []
+    long_has_answer_wrong = []
+    long_span_wrong = []
+    short_no_answer_wrong = []
+    short_has_answer_wrong = []
+    short_span_wrong = []
+
     def _get_metric_dict(answer_stats, prefix=''):
         """Compute all metrics for a set of answer statistics."""
         tp = fp = fn = 0.
-        for has_gold, has_pred, is_correct, _ in answer_stats:
+        for has_gold, has_pred, is_correct, _, example_id in answer_stats:
             # !!!!!!!!!!!!!
             # is_correct is False as long as gold is null span
             if has_gold and is_correct:
@@ -395,9 +392,21 @@ def get_metrics_with_answer_stats(long_answer_stats, short_answer_stats):
                 # FP = the predicted indices do NOT match one of the possible ground truth indices,
                 # OR a prediction has been made where no ground truth exists
                 fp += 1
+                if not has_gold and prefix == 'long-':
+                    long_no_answer_wrong.append(example_id)
+                if not has_gold and prefix == 'short-':
+                    short_no_answer_wrong.append(example_id)
+                if has_gold and prefix == 'long-':
+                    long_span_wrong.append(example_id)
+                if has_gold and prefix == 'short-':
+                    short_span_wrong.append(example_id)
             elif not has_pred and has_gold:
                 # FN = no prediction has been made where a ground truth exists
                 fn += 1
+                if prefix == 'long-':
+                    long_has_answer_wrong.append(example_id)
+                if prefix == 'short-':
+                    short_has_answer_wrong.append(example_id)
 
         f1 = safe_divide(2 * tp, 2 * tp + fp + fn)
         precision = safe_divide(tp, tp + fp)
@@ -415,4 +424,14 @@ def get_metrics_with_answer_stats(long_answer_stats, short_answer_stats):
     metrics = _get_metric_dict(long_answer_stats, 'long-')
     metrics.update(_get_metric_dict(short_answer_stats, 'short-'))
     metrics.update(_get_metric_dict(long_answer_stats + short_answer_stats, 'all-'))
+
+    with open('wrong_examples.json', 'w') as w:
+        json.dump({
+            'long_no_answer_wrong': long_no_answer_wrong,
+            'long_has_answer_wrong': long_has_answer_wrong,
+            'long_span_wrong': long_span_wrong,
+            'short_no_answer_wrong': short_no_answer_wrong,
+            'short_has_answer_wrong': short_has_answer_wrong,
+            'short_span_wrong': short_span_wrong
+        }, w, indent=2)
     return metrics

@@ -791,7 +791,8 @@ class ScoreSummary(object):
         self.predicted_label = None
         self.short_span_score = None
         self.long_span_score = None
-        self.cls_token_score = None
+        self.long_cls_score = None
+        self.short_cls_score = None
         self.answer_type_logits = None
 
 
@@ -907,7 +908,7 @@ def compute_predictions(example, n_best_size=10, max_answer_length=30):
     return summary
 
 
-def compute_topk_predictions(example, long_topk=5, short_topk=5, max_answer_length=30):
+def compute_topk_predictions(example, long_topk=5, short_topk=5, max_answer_length=30, ensemble=False):
     """
     Converts an example into an NQEval object for evaluation.
     :param example: EvalExample
@@ -934,11 +935,13 @@ def compute_topk_predictions(example, long_topk=5, short_topk=5, max_answer_leng
                 long_start_index = result['long_start_topk_index'][i]
                 long_end_logits = result['long_end_topk_logits'][i]
                 long_end_index = result['long_end_topk_index'][i]
+                long_cls_logits = result['long_cls_logits']
 
                 short_start_logits = result['short_start_topk_logits'][i][j]
                 short_start_index = result['short_start_topk_index'][i][j]
                 short_end_logits = result['short_end_topk_logits'][i][j]
                 short_end_index = result['short_end_topk_index'][i][j]
+                short_cls_logits = result['short_cls_logits'][i]
 
                 if long_start_index >= feature_length:
                     continue
@@ -973,20 +976,22 @@ def compute_topk_predictions(example, long_topk=5, short_topk=5, max_answer_leng
                 summary = ScoreSummary()
                 summary.long_span_score = (long_start_logits + long_end_logits)
                 summary.short_span_score = (short_start_logits + short_end_logits)
-                summary.cls_token_score = 0
+                summary.long_cls_score = long_cls_logits
+                summary.short_cls_score = short_cls_logits
                 summary.answer_type_logits = result["answer_type_logits"] - \
                                              np.array(result["answer_type_logits"]).mean()
 
-                score = summary.short_span_score + summary.long_span_score
-                predictions.append((score, summary, rel_long_start_index, rel_long_end_index,
+                long_score = summary.long_span_score - summary.long_cls_score - summary.answer_type_logits[0]
+                short_score = summary.short_span_score - summary.short_cls_score - summary.answer_type_logits[0]
+                predictions.append((long_score, short_score, summary, rel_long_start_index, rel_long_end_index,
                                     rel_short_start_index, rel_short_end_index))
 
     short_span = Span(-1, -1)
     long_span = Span(-1, -1)
-    score = 0
     summary = ScoreSummary()
     if predictions:
-        score, summary, long_start_span, long_end_span, short_start_span, short_end_span = \
+        # 暂时仅靠long_score排序
+        long_score, short_score, summary, long_start_span, long_end_span, short_start_span, short_end_span = \
             sorted(predictions, key=lambda x: x[0], reverse=True)[0]
         long_span = Span(long_start_span, long_end_span)
         best_long_span = Span(long_start_span, long_end_span)
@@ -996,6 +1001,7 @@ def compute_topk_predictions(example, long_topk=5, short_topk=5, max_answer_leng
         for c in example.candidates:
             # if c['top_level'] is False:
             #     continue
+
             start = long_span.start_token_idx
             end = long_span.end_token_idx
 
@@ -1006,6 +1012,8 @@ def compute_topk_predictions(example, long_topk=5, short_topk=5, max_answer_leng
         long_span = best_long_span
     else:
         summary.answer_type_logits = np.array([0] * 5)
+        long_score = 0
+        short_score = 0
 
     answer_type = int(np.argmax(summary.answer_type_logits))
     if answer_type == AnswerType.YES:
@@ -1018,19 +1026,19 @@ def compute_topk_predictions(example, long_topk=5, short_topk=5, max_answer_leng
     summary.predicted_label = {
         "example_id": int(example.example_id),
         "long_answer": {
-            "start_token": int(long_span.start_token_idx) if answer_type != AnswerType.UNKNOWN else -1,
-            "end_token": int(long_span.end_token_idx) if answer_type != AnswerType.UNKNOWN else -1,
+            "start_token": int(long_span.start_token_idx) if answer_type != AnswerType.UNKNOWN or ensemble else -1,
+            "end_token": int(long_span.end_token_idx) if answer_type != AnswerType.UNKNOWN or ensemble else -1,
             "start_byte": -1,
             "end_byte": -1
         },
-        "long_answer_score": float(score),
+        "long_answer_score": float(long_score),
         "short_answers": [{
-            "start_token": int(short_span.start_token_idx) if answer_type == AnswerType.SHORT else -1,
-            "end_token": int(short_span.end_token_idx) if answer_type == AnswerType.SHORT else -1,
+            "start_token": int(short_span.start_token_idx) if answer_type == AnswerType.SHORT or ensemble else -1,
+            "end_token": int(short_span.end_token_idx) if answer_type == AnswerType.SHORT or ensemble else -1,
             "start_byte": -1,
             "end_byte": -1
         }],
-        "short_answers_score": float(score),
+        "short_answers_score": float(short_score),
         "yes_no_answer": yes_no_answer,
         "answer_type_logits": summary.answer_type_logits.tolist(),
         "answer_type": answer_type
@@ -1041,7 +1049,7 @@ def compute_topk_predictions(example, long_topk=5, short_topk=5, max_answer_leng
 
 def compute_pred_dict(candidates_dict, dev_features, raw_results,
                       n_best_size=10, max_answer_length=30, topk_pred=False,
-                      long_n_top=5, short_n_top=5):
+                      long_n_top=5, short_n_top=5, ensemble=False):
     """
     Computes official answer key from raw logits.
     :param candidates_dict: dict{str:list}
@@ -1066,20 +1074,6 @@ def compute_pred_dict(candidates_dict, dev_features, raw_results,
     examples = []
     logger.info('merging examples...')
     # Put example, result and feature for identical unique_id adjacent
-    # E.g [(-9198586108074363474, 0, `example`), (-9198586108074363474, 0, `result`),
-    # (-9198586108074363474, 0, `feature`), ...]
-    # merged = {}
-    # for idx, type_, datum in examples_by_id:
-    #     merged[idx] = {'example': datum}
-    # for idx, type_, datum in raw_results_by_id:
-    #     merged[str(datum['example_id'])]['results'] = datum
-    # for idx, type_, datum in features_by_id:
-    #     merged[str(datum.example_index)]['features'] = datum
-    #
-    # for idx in merged:
-    #     examples.append(EvalExample(idx, merged[idx]['example']))
-    #     examples[-1].features[idx] = merged[idx]['features']
-    #     examples[-1].results[idx] = merged[idx]['results']
     merged = sorted(examples_by_id + raw_results_by_id + features_by_id)
     logger.info('done.')
     for idx, type_, datum in merged:
@@ -1098,7 +1092,7 @@ def compute_pred_dict(candidates_dict, dev_features, raw_results,
             summary = compute_predictions(e, n_best_size, max_answer_length)
         else:
             summary = compute_topk_predictions(e, long_topk=long_n_top, short_topk=short_n_top,
-                                               max_answer_length=max_answer_length)
+                                               max_answer_length=max_answer_length, ensemble=ensemble)
         nq_pred_dict[e.example_id] = summary.predicted_label
 
     return nq_pred_dict

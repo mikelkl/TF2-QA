@@ -20,6 +20,7 @@ RawResult = collections.namedtuple("RawResult",
                                     "long_end_topk_logits", "long_end_topk_index",
                                     "short_start_topk_logits", "short_start_topk_index",
                                     "short_end_topk_logits", "short_end_topk_index",
+                                    "long_cls_logits", "short_cls_logits",
                                     "answer_type_logits"])
 
 
@@ -69,7 +70,9 @@ def evaluate(model, args, dev_features, device, global_steps):
                                short_start_topk_index=outputs['short_start_topk_index'][i].cpu().numpy(),
                                short_end_topk_logits=outputs['short_end_topk_logits'][i].cpu().numpy(),
                                short_end_topk_index=outputs['short_end_topk_index'][i].cpu().numpy(),
-                               answer_type_logits=to_list(outputs['answer_type_logits'][i]))
+                               answer_type_logits=to_list(outputs['answer_type_logits'][i]),
+                               long_cls_logits=outputs['long_cls_logits'][i].cpu().numpy(),
+                               short_cls_logits=outputs['short_cls_logits'][i].cpu().numpy())
             all_results.append(result)
 
     pickle.dump(all_results, open(os.path.join(args.output_dir, 'RawResults.pkl'), 'wb'))
@@ -133,7 +136,7 @@ if __name__ == '__main__':
     parser.add_argument("--n_best_size", default=20, type=int)
     parser.add_argument("--max_answer_length", default=30, type=int)
     parser.add_argument("--eval_steps", default=2500, type=int)
-    parser.add_argument('--seed', type=int, default=556)
+    parser.add_argument('--seed', type=int, default=894)
     parser.add_argument('--lr', type=float, default=3e-5)
     parser.add_argument('--dropout', type=float, default=0.1)
     parser.add_argument('--clip_norm', type=float, default=1.0)
@@ -144,14 +147,15 @@ if __name__ == '__main__':
 
     parser.add_argument("--bert_config_file", default='albert_xxlarge', type=str)
     parser.add_argument("--init_restore_dir", default='albert_xxlarge', type=str)
-    parser.add_argument("--output_dir", default='check_points/albert-xxlarge-tfidf-600-top8-V0', type=str)
+    parser.add_argument("--output_dir", default='check_points/albert-xxlarge-tfidf-600-top8-V01', type=str)
     parser.add_argument("--log_file", default='log.txt', type=str)
     parser.add_argument("--setting_file", default='setting.txt', type=str)
 
     parser.add_argument("--predict_file", default='data/simplified-nq-dev.jsonl', type=str)
     parser.add_argument("--train_feat_dir", default='dataset/train_data_maxlen512_albert_tfidf_ls_features.bin',
                         type=str)
-    parser.add_argument("--dev_feat_dir", default='dataset/dev_data_maxlen512_albert_tfidf_ls_features.bin', type=str)
+    parser.add_argument("--dev_feat_dir", default='dataset/dev_data_maxlen512_albert_tfidf_ls_features.bin',
+                        type=str)
 
     args = parser.parse_args()
     args.bert_config_file = os.path.join(args.bert_config_file, 'albert_config.json')

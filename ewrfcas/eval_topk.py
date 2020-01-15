@@ -1,6 +1,7 @@
 import torch
 import argparse
-from modeling import BertJointForNQ, BertConfig
+# from modeling import BertJointForNQ, BertConfig
+from albert_modeling import AlbertConfig, AlBertJointForNQ2
 from torch.utils.data import TensorDataset, DataLoader
 import utils
 from tqdm import tqdm
@@ -17,6 +18,7 @@ RawResult = collections.namedtuple("RawResult",
                                     "long_end_topk_logits", "long_end_topk_index",
                                     "short_start_topk_logits", "short_start_topk_index",
                                     "short_end_topk_logits", "short_end_topk_index",
+                                    "long_cls_logits", "short_cls_logits",
                                     "answer_type_logits"])
 
 
@@ -49,11 +51,13 @@ def evaluate(model, args, dev_features, device, global_steps):
                                short_start_topk_index=outputs['short_start_topk_index'][i].cpu().numpy(),
                                short_end_topk_logits=outputs['short_end_topk_logits'][i].cpu().numpy(),
                                short_end_topk_index=outputs['short_end_topk_index'][i].cpu().numpy(),
-                               answer_type_logits=to_list(outputs['answer_type_logits'][i]))
+                               answer_type_logits=to_list(outputs['answer_type_logits'][i]),
+                               long_cls_logits=outputs['long_cls_logits'][i].cpu().numpy(),
+                               short_cls_logits=outputs['short_cls_logits'][i].cpu().numpy())
             all_results.append(result)
 
-    pickle.dump(all_results, open(os.path.join(args.output_dir, 'RawResults.pkl'), 'wb'))
-    # all_results = pickle.load(open(os.path.join(args.output_dir, 'RawResults.pkl'), 'rb'))
+    pickle.dump(all_results, open(os.path.join(args.output_dir, 'RawResults_dev.pkl'), 'wb'))
+    # all_results = pickle.load(open(os.path.join(args.output_dir, 'RawResults_dev.pkl'), 'rb'))
 
     candidates_dict = read_candidates_from_one_split(args.predict_file)
     nq_pred_dict = compute_pred_dict(candidates_dict, dev_features,
@@ -106,7 +110,7 @@ def to_list(tensor):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument("--gpu_ids", default="0,1,2,3", type=str)
+    parser.add_argument("--gpu_ids", default="0,1,2,3,4,5,6,7", type=str)
     parser.add_argument("--train_epochs", default=3, type=int)
     parser.add_argument("--train_batch_size", default=48, type=int)
     parser.add_argument("--eval_batch_size", default=128, type=int)
@@ -122,19 +126,17 @@ if __name__ == '__main__':
     parser.add_argument("--weight_decay_rate", default=0.01, type=float, help='weight_decay_rate')
     parser.add_argument("--float16", default=True, type=bool)
 
-    parser.add_argument("--bert_config_file", default='check_points/bert-large-wwm-finetuned-squad', type=str)
-    parser.add_argument("--init_restore_dir", default='check_points/bert-large-tfidf-600-top8-V4',
-                        type=str)
-    parser.add_argument("--output_dir", default='check_points/bert-large-tfidf-600-top8-V4',
-                        type=str)
+    parser.add_argument("--bert_config_file", default='check_points/albert-xxlarge-tfidf-600-top8-V0', type=str)
+    parser.add_argument("--init_restore_dir", default='check_points/albert-xxlarge-tfidf-600-top8-V0', type=str)
+    parser.add_argument("--output_dir", default='check_points/albert-xxlarge-tfidf-600-top8-V0', type=str)
     parser.add_argument("--log_file", default='log.txt', type=str)
 
     parser.add_argument("--predict_file", default='data/simplified-nq-dev.jsonl', type=str)
     # dev_data_maxlen512_tfidf_features.bin
-    parser.add_argument("--dev_feat_dir", default='dataset/dev_data_maxlen512_tfidf_ls_features.bin', type=str)
+    parser.add_argument("--dev_feat_dir", default='dataset/dev_data_maxlen512_albert_tfidf_ls_features.bin', type=str)
 
     args = parser.parse_args()
-    args.bert_config_file = os.path.join(args.bert_config_file, 'config.json')
+    args.bert_config_file = os.path.join('albert_xxlarge', 'albert_config.json')
     args.init_restore_dir = os.path.join(args.init_restore_dir, 'best_checkpoint.pth')
     args.log_file = os.path.join(args.output_dir, args.log_file)
     os.makedirs(args.output_dir, exist_ok=True)
@@ -150,8 +152,8 @@ if __name__ == '__main__':
     dev_dataset, dev_features = load_cached_data(feature_dir=args.dev_feat_dir, output_features=True, evaluate=True)
     eval_dataloader = DataLoader(dev_dataset, shuffle=False, batch_size=args.eval_batch_size)
 
-    bert_config = BertConfig.from_json_file(args.bert_config_file)
-    model = BertJointForNQ(bert_config)
+    bert_config = AlbertConfig.from_json_file(args.bert_config_file)
+    model = AlBertJointForNQ2(bert_config)
     utils.torch_show_all_params(model)
     utils.torch_init_model(model, args.init_restore_dir)
     if args.float16:
@@ -160,4 +162,4 @@ if __name__ == '__main__':
     if n_gpu > 1:
         model = torch.nn.DataParallel(model)
 
-    results = evaluate(model, args, dev_features, device, 23376)
+    results = evaluate(model, args, dev_features, device, -1)

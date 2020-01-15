@@ -19,6 +19,7 @@ RawResult = collections.namedtuple("RawResult",
                                     "long_end_topk_logits", "long_end_topk_index",
                                     "short_start_topk_logits", "short_start_topk_index",
                                     "short_end_topk_logits", "short_end_topk_index",
+                                    "long_cls_logits", "short_cls_logits",
                                     "answer_type_logits"])
 
 
@@ -115,17 +116,17 @@ def make_submission(output_prediction_file, output_dir):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument("--gpu_ids", default="4,5,6,7", type=str)
-    parser.add_argument("--eval_batch_size", default=64, type=int)
+    parser.add_argument("--gpu_ids", default="0,1,2,3,4,5,6,7", type=str)
+    parser.add_argument("--eval_batch_size", default=128, type=int)
     parser.add_argument("--n_best_size", default=20, type=int)
     parser.add_argument("--max_answer_length", default=30, type=int)
     parser.add_argument("--float16", default=True, type=bool)
     parser.add_argument("--bert_config_file", default=None, type=str)
     parser.add_argument("--init_restore_dir", default=None, type=str)
     parser.add_argument("--predict_file", default='data/simplified-nq-test.jsonl', type=str)
-    parser.add_argument("--output_dir", default='check_points/albert-xxlarge-tfidf-600-top8-V0',
+    parser.add_argument("--output_dir", default='check_points/albert-xxlarge-tfidf-600-top8-V5',
                         type=str)
-    parser.add_argument("--predict_feat", default='dataset/test_data_maxlen512_albert_tfidf_ls_features.bin',
+    parser.add_argument("--predict_feat", default='dataset/test_data_maxlen512_albert_tfidf_ls_combine_features.bin',
                         type=str)
     args = parser.parse_args()
     args.bert_config_file = os.path.join('albert_xxlarge', 'albert_config.json')
@@ -182,10 +183,13 @@ if __name__ == '__main__':
                                short_start_topk_index=outputs['short_start_topk_index'][i].cpu().numpy(),
                                short_end_topk_logits=outputs['short_end_topk_logits'][i].cpu().numpy(),
                                short_end_topk_index=outputs['short_end_topk_index'][i].cpu().numpy(),
-                               answer_type_logits=to_list(outputs['answer_type_logits'][i]))
+                               answer_type_logits=to_list(outputs['answer_type_logits'][i]),
+                               long_cls_logits=outputs['long_cls_logits'][i].cpu().numpy(),
+                               short_cls_logits=outputs['short_cls_logits'][i].cpu().numpy())
             all_results.append(result)
 
     pickle.dump(all_results, open(os.path.join(args.output_dir, 'RawResults_test.pkl'), 'wb'))
+    # all_results = pickle.load(open(os.path.join(args.output_dir, 'RawResults_test.pkl'), 'rb'))
 
     print("Going to candidates file")
     candidates_dict = read_candidates_from_one_split(args.predict_file)
@@ -196,9 +200,9 @@ if __name__ == '__main__':
                                      args.n_best_size, args.max_answer_length, topk_pred=True,
                                      long_n_top=5, short_n_top=5)
 
-    output_prediction_file = os.path.join(args.output_dir, 'predictions_test.json')
+    output_prediction_file = os.path.join(args.output_dir, 'test_predictions.json')
     print("Saving predictions to", output_prediction_file)
     with open(output_prediction_file, 'w') as f:
         json.dump({'predictions': list(nq_pred_dict.values())}, f)
 
-    make_submission(output_prediction_file, args.output_dir)
+    # make_submission(output_prediction_file, args.output_dir)

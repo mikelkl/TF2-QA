@@ -653,7 +653,11 @@ class AlBertJointForNQ2(nn.Module):
                 'short_end_topk_logits': short_end_topk_logits,
                 'short_end_topk_index': short_end_topk_index,
                 # [bs, n_class]
-                'answer_type_logits': answer_type_logits
+                'answer_type_logits': answer_type_logits,
+                # [bs,]
+                'long_cls_logits': long_start_logits[:, 0] + long_end_logits[:, 0],
+                # [bs, topk]
+                'short_cls_logits': short_start_logits[:, :, 0] + short_end_logits[:, :, 0]
             }
 
             return outputs

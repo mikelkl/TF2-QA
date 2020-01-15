@@ -214,6 +214,12 @@ def create_example(line, tfidf_dict, is_training, args):
     # 由于接下来要对special_tokens排序，所以这里tfidf选择的段落要按照首段排序
     tfidf_cands_ids = sorted(tfidf_cands_ids, key=lambda x: x[0])
 
+    if args.do_combine:  # 如果do_combine，我们把所有抽取的candidates合并到一起
+        tfidf_cands_ids_ = []
+        for c in tfidf_cands_ids:
+            tfidf_cands_ids_.extend(c)
+        tfidf_cands_ids = [tfidf_cands_ids_]
+
     # 获取candidate的type信息，去除HTML符号
     # 保留特殊token到段首
     # 注意table paragraph list最小起步是1
@@ -548,7 +554,7 @@ def convert_single_example(example, tokenizer, is_training, args):
                 # 如果是短答案，对一下答案是否正确
                 if example['answer_type'] == AnswerType['SHORT']:
                     answer_text = " ".join(tokens[start_position:(end_position + 1)])
-                    answer_text = answer_text.replace(' ','').replace(u"▁", ' ').strip()
+                    answer_text = answer_text.replace(' ', '').replace(u"▁", ' ').strip()
                     gt_answer = example['short_answer_text'].lower()
                     answer_text_chars = [c for c in answer_text if c not in " \t\r\n" and ord(c) != 0x202F]
                     gt_answer_chars = [c for c in gt_answer if c not in " \t\r\n" and ord(c) != 0x202F]
@@ -717,7 +723,7 @@ def convert_single_ls_example(example, tokenizer, is_training, args):
                 # 如果是短答案，对一下答案是否正确
                 if example['answer_type'] == AnswerType['SHORT']:
                     answer_text = " ".join(tokens[short_start_position:(short_end_position + 1)])
-                    answer_text = answer_text.replace(' ','').replace(u"▁", ' ').strip()
+                    answer_text = answer_text.replace(' ', '').replace(u"▁", ' ').strip()
                     gt_answer = example['short_answer_text'].lower()
                     answer_text_chars = [c for c in answer_text if c not in " \t\r\n" and ord(c) != 0x202F]
                     gt_answer_chars = [c for c in gt_answer if c not in " \t\r\n" and ord(c) != 0x202F]
@@ -770,17 +776,24 @@ if __name__ == '__main__':
                         help="Maximum context position for which to generate special tokens.")
     parser.add_argument("--example_neg_filter", type=float, default=0.2,
                         help="If positive, probability of including answers of type `UNKNOWN`.")
-    parser.add_argument("--include_unknowns", type=float, default=0.09,
+    parser.add_argument("--include_unknowns", type=float, default=0.025,
                         help="If positive, probability of including answers of type `UNKNOWN`.")
     parser.add_argument("--skip_nested_contexts", type=bool, default=True,
                         help="Completely ignore context that are not top level nodes in the page.")
     parser.add_argument("--do_ls", type=bool, default=True,
                         help="Whether to use long short index labels?")
+    parser.add_argument("--do_combine", type=bool, default=True,
+                        help="Whether to combine all remained examples from each line?")
     parser.add_argument("--tfidf_train_file", type=str, default='dataset/train_cand_selected_600.json')
     parser.add_argument("--tfidf_dev_file", type=str, default='dataset/dev_cand_selected_600.json')
     parser.add_argument("--tfidf_test_file", type=str, default='dataset/test_cand_selected_600.json')
 
     args = parser.parse_args()
+
+    # 由于combine了以后一个example会非常长，所以会额外多出很多负样本，这里我们吧neg example的过滤复合到feat里
+    # if args.do_combine:
+    #     args.include_unknowns = args.include_unknowns * args.example_neg_filter
+
     random.seed(args.seed)
     tokenizer = tokenization.FullTokenizer(
         vocab_file='albert_xxlarge/30k-clean.vocab', do_lower_case=True,
@@ -793,6 +806,9 @@ if __name__ == '__main__':
                                        'train_data_maxlen{}_albert_tfidf_features.bin'.format(args.max_seq_length))
     if args.do_ls:
         feature_output_file = feature_output_file.replace('_features', '_ls_features')
+    if args.do_combine:
+        example_output_file = example_output_file.replace('_examples', '_combine_examples')
+        feature_output_file = feature_output_file.replace('_features', '_combine_features')
     if not os.path.exists(feature_output_file):
         tfidf_dict = json.load(open(args.tfidf_train_file))
         if os.path.exists(example_output_file):
@@ -804,38 +820,44 @@ if __name__ == '__main__':
         features = convert_examples_to_features(examples=examples, tokenizer=tokenizer, is_training=True, args=args)
         torch.save(features, feature_output_file)
 
-    # # dev preprocess
-    # example_output_file = os.path.join(args.output_dir,
-    #                                    'dev_data_maxlen{}_tfidf_examples.json'.format(args.max_seq_length))
-    # feature_output_file = os.path.join(args.output_dir,
-    #                                    'dev_data_maxlen{}_albert_tfidf_features.bin'.format(args.max_seq_length))
-    # if args.do_ls:
-    #     feature_output_file = feature_output_file.replace('_features', '_ls_features')
-    # if not os.path.exists(feature_output_file):
-    #     tfidf_dict = json.load(open(args.tfidf_dev_file))
-    #     if os.path.exists(example_output_file):
-    #         examples = json.load(open(example_output_file))
-    #     else:
-    #         examples = read_nq_examples(input_file=args.dev_file, tfidf_dict=tfidf_dict, is_training=False, args=args)
-    #         with open(example_output_file, 'w') as w:
-    #             json.dump(examples, w)
-    #     features = convert_examples_to_features(examples=examples, tokenizer=tokenizer, is_training=False, args=args)
-    #     torch.save(features, feature_output_file)
-    #
-    # # test preprocess
-    # example_output_file = os.path.join(args.output_dir,
-    #                                    'test_data_maxlen{}_tfidf_examples.json'.format(args.max_seq_length))
-    # feature_output_file = os.path.join(args.output_dir,
-    #                                    'test_data_maxlen{}_albert_tfidf_features.bin'.format(args.max_seq_length))
-    # if args.do_ls:
-    #     feature_output_file = feature_output_file.replace('_features', '_ls_features')
-    # if not os.path.exists(feature_output_file):
-    #     tfidf_dict = json.load(open(args.tfidf_test_file))
-    #     if os.path.exists(example_output_file):
-    #         examples = json.load(open(example_output_file))
-    #     else:
-    #         examples = read_nq_examples(input_file=args.test_file, tfidf_dict=tfidf_dict, is_training=False, args=args)
-    #         with open(example_output_file, 'w') as w:
-    #             json.dump(examples, w)
-    #     features = convert_examples_to_features(examples=examples, tokenizer=tokenizer, is_training=False, args=args)
-    #     torch.save(features, feature_output_file)
+    # dev preprocess
+    example_output_file = os.path.join(args.output_dir,
+                                       'dev_data_maxlen{}_tfidf_examples.json'.format(args.max_seq_length))
+    feature_output_file = os.path.join(args.output_dir,
+                                       'dev_data_maxlen{}_albert_tfidf_features.bin'.format(args.max_seq_length))
+    if args.do_ls:
+        feature_output_file = feature_output_file.replace('_features', '_ls_features')
+    if args.do_combine:
+        example_output_file = example_output_file.replace('_examples', '_combine_examples')
+        feature_output_file = feature_output_file.replace('_features', '_combine_features')
+    if not os.path.exists(feature_output_file):
+        tfidf_dict = json.load(open(args.tfidf_dev_file))
+        if os.path.exists(example_output_file):
+            examples = json.load(open(example_output_file))
+        else:
+            examples = read_nq_examples(input_file=args.dev_file, tfidf_dict=tfidf_dict, is_training=False, args=args)
+            with open(example_output_file, 'w') as w:
+                json.dump(examples, w)
+        features = convert_examples_to_features(examples=examples, tokenizer=tokenizer, is_training=False, args=args)
+        torch.save(features, feature_output_file)
+
+    # test preprocess
+    example_output_file = os.path.join(args.output_dir,
+                                       'test_data_maxlen{}_tfidf_examples.json'.format(args.max_seq_length))
+    feature_output_file = os.path.join(args.output_dir,
+                                       'test_data_maxlen{}_albert_tfidf_features.bin'.format(args.max_seq_length))
+    if args.do_ls:
+        feature_output_file = feature_output_file.replace('_features', '_ls_features')
+    if args.do_combine:
+        example_output_file = example_output_file.replace('_examples', '_combine_examples')
+        feature_output_file = feature_output_file.replace('_features', '_combine_features')
+    if not os.path.exists(feature_output_file):
+        tfidf_dict = json.load(open(args.tfidf_test_file))
+        if os.path.exists(example_output_file):
+            examples = json.load(open(example_output_file))
+        else:
+            examples = read_nq_examples(input_file=args.test_file, tfidf_dict=tfidf_dict, is_training=False, args=args)
+            with open(example_output_file, 'w') as w:
+                json.dump(examples, w)
+        features = convert_examples_to_features(examples=examples, tokenizer=tokenizer, is_training=False, args=args)
+        torch.save(features, feature_output_file)
