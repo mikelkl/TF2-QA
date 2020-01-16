@@ -390,7 +390,7 @@ def create_expreds(examples, predictions):
         if example in predictions:
             # # mark up predicted long answer for highlighting
             pred = predictions[example]
-            for cand in examples[example].candidates:
+            for i, cand in enumerate(examples[example].candidates):
                 if cand.start_token == pred.long_answer_start_token and cand.end_token == pred.long_answer_end_token:
                     if cand.is_answer:
                         # ## tp means pred == gold
@@ -398,6 +398,7 @@ def create_expreds(examples, predictions):
                     else:
                         # ## pred_answer means pred != gold
                         cand.style = "pred_answer"
+                    expreds[example].pred_long_candidates_idx = i
 
             expreds[example].pred_long_answer_score = predictions[example].long_answer_score
             expreds[example].pred_long_answer_start_token = predictions[example].long_answer_start_token
