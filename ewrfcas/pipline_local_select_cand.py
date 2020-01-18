@@ -2,18 +2,73 @@
 
 from tqdm import tqdm
 import json
+import os
 
+# STEP2 将分段后的语料选出top8
+import numpy as np
+from sklearn.feature_extraction.text import TfidfTransformer
+from sklearn.feature_extraction.text import CountVectorizer
+
+
+# 停用词
+stopwords = set()
+with open("stopwords", 'r') as f:
+    for line in f:
+        stopwords.add(line.strip())
+
+# top1: 51%
+# top3: 82.4%
+# top5: 91.6%
+# top8: 96.7%
+# top10: 98%
+def select_cands_by_tfidf(question_text, doc_tokens, cands, topk = 8):
+    question_text = [qt for qt in question_text.split() if qt not in stopwords]
+    question_text = " ".join(question_text)
+
+    cv = CountVectorizer()
+    tfidf = TfidfTransformer()
+    cands_text = []
+    cands_id_top_level_true = []
+    for i, cand in enumerate(cands):
+        if cand['top_level'] is True:
+            cand_tokens = doc_tokens[cand['start_token']:cand['end_token']]
+            cand_text = []
+            for t in cand_tokens:
+                if '<' not in t:
+                    cand_text.append(t)
+            cand_text = " ".join(cand_text).lower()
+            cands_text.append(cand_text)
+            cands_id_top_level_true.append(i)
+    corpus = [question_text]
+    corpus.extend(cands_text)
+
+    words = cv.fit_transform(corpus)
+    question_indices = words[0].indices
+    tfidf_scores = tfidf.fit_transform(words)
+    tfidf_scores = tfidf_scores.toarray()[1:]
+    tfidf_scores = np.sum(tfidf_scores[:, question_indices], axis=1)
+    tfidf_scores_with_id = list(zip(cands_id_top_level_true, tfidf_scores))
+
+    best_para_ids = sorted(tfidf_scores_with_id, key=lambda x: x[1], reverse=True)
+    best_para_ids = best_para_ids[:topk]
+
+    selected_cands_with_id = []
+    for best_para_id, _ in best_para_ids:
+        selected_cands_with_id.append((best_para_id, cands[best_para_id]))
+
+    return selected_cands_with_id
 
 def split_data(input_dir, output_dir, token_limit=600, is_training=False):
-    para_splited_data = []
+    tfidf_cand_select = {}
     with open(input_dir, 'r') as f:
         for line in tqdm(f):
             temp_data = json.loads(line)
             context = temp_data['document_text']
             doc_tokens = context.split()
             cands = temp_data['long_answer_candidates']
+            selected_cands_with_id = select_cands_by_tfidf(temp_data['question_text'], doc_tokens, cands, topk=16)
             split_tokens = []
-            for i, cand in enumerate(cands):
+            for i, cand in selected_cands_with_id:
                 if cand['top_level'] is True:
                     split_tokens.append({'cand_id': i, 'start': cand['start_token'], 'end': cand['end_token'],
                                          'doc_tokens': doc_tokens[cand['start_token']:cand['end_token']]})
@@ -25,18 +80,20 @@ def split_data(input_dir, output_dir, token_limit=600, is_training=False):
                 split_tokens[i]['doc_tokens'] = [t for t in split_tokens[i]['doc_tokens'] if '<' not in t]
                 paras.append({'cand_id': split_tokens[i]['cand_id'], 'para': " ".join(split_tokens[i]['doc_tokens'])})
 
-            split_paras = []
-            new_para = {'para': "", 'cand_ids': []}
+            pred_cand_ids = []
+            para_ = ""
+            cand_ids = []
             for para in paras:
-                new_para['cand_ids'].append(para['cand_id'])
-                if new_para['para'] != "":
-                    new_para['para'] += " "
-                new_para['para'] += para['para']
-                if len(new_para['para'].split()) > token_limit:
-                    split_paras.append(new_para)
-                    new_para = {'para': "", 'cand_ids': []}
-            if len(new_para['cand_ids']) > 0:
-                split_paras.append(new_para)
+                cand_ids.append(para['cand_id'])
+                if para_ != "":
+                    para_ += " "
+                para_ += para['para']
+                if len(para_.split()) > token_limit:
+                    pred_cand_ids.append(cand_ids)
+                    para_ = ""
+                    cand_ids = []
+            if len(cand_ids) > 0:
+                pred_cand_ids.append(cand_ids)
 
             # 由于答案所在的cand不一定是top_level，我们要把答案所在cand映射到top_level所在的cand里
             if is_training:
@@ -60,91 +117,15 @@ def split_data(input_dir, output_dir, token_limit=600, is_training=False):
             else:
                 true_cand_id = -1
 
-            para_splited_data.append({
-                'example_id': temp_data['example_id'],
-                'question_text': temp_data['question_text'],
-                'true_cand_id': true_cand_id,
-                'split_paras': split_paras
-            })
+            tfidf_cand_select[temp_data['example_id']] = pred_cand_ids
 
     with open(output_dir, 'w') as w:
-        json.dump(para_splited_data, w, indent=2)
+        json.dump(tfidf_cand_select, w, indent=2)
 
 
-split_data('../input/tensorflow2-question-answering/simplified-nq-test.jsonl', 'test_splited_600.json', token_limit=600, is_training=False)
+split_data('../input/tensorflow2-question-answering/simplified-nq-test.jsonl', 'test_cand_selected_600.json', token_limit=600, is_training=False)
 
-# STEP2 将分段后的语料选出top8
-import numpy as np
-from sklearn.feature_extraction.text import TfidfTransformer
-from sklearn.feature_extraction.text import CountVectorizer
 
-# top1: 51%
-# top3: 82.4%
-# top5: 91.6%
-# top8: 96.7%
-# top10: 98%
-# topk = 2
-topk = 8
-
-with open('test_splited_600.json', 'r') as f:
-    para_splited_data = json.load(f)
-
-# 停用词
-stopwords = set()
-with open("stopwords", 'r') as f:
-    for line in f:
-        stopwords.add(line.strip())
-
-total_valid_num = 0
-hit_num = 0
-
-tfidf_cand_select = {}
-
-with tqdm(total=len(para_splited_data), desc='Building, Top{}'.format(topk)) as pbar:
-    for para_sample in para_splited_data:
-        question_text = para_sample['question_text'].lower()
-        question_text = [qt for qt in question_text.split() if qt not in stopwords]
-        question_text = " ".join(question_text)
-
-        cv = CountVectorizer()
-        tfidf = TfidfTransformer()
-
-        paras = para_sample['split_paras']
-        gt = para_sample['true_cand_id']
-        paras_text = [p['para'].lower() for p in paras]
-        corpus = [question_text]
-        corpus.extend(paras_text)
-
-        words = cv.fit_transform(corpus)
-        question_indices = words[0].indices
-        tfidf_scores = tfidf.fit_transform(words)
-        tfidf_scores = tfidf_scores.toarray()[1:]
-        tfidf_scores = np.sum(tfidf_scores[:, question_indices], axis=1)
-
-        best_para_ids = np.argsort(tfidf_scores)[::-1]
-        best_para_ids = best_para_ids[:topk]
-
-        best_paras = []
-        pred_cand_ids = []
-        cand_set = set()
-        for best_para_id in best_para_ids:
-            best_paras.append(paras[best_para_id])
-            pred_cand_ids.append(paras[best_para_id]['cand_ids'])
-            for ci in pred_cand_ids[-1]:
-                cand_set.add(ci)
-
-        if gt != -1:  # 统计tfidf截取段落后准确率
-            total_valid_num += 1
-            if gt in cand_set:
-                hit_num += 1
-
-        pbar.set_postfix({'Acc': '{0:1.5f}'.format(hit_num / (total_valid_num + 1e-5))})
-        pbar.update(1)
-
-        tfidf_cand_select[para_sample['example_id']] = pred_cand_ids
-
-with open("test_cand_selected_600.json", 'w') as w:
-    json.dump(tfidf_cand_select, w, indent=2)
 
 # STEP3 预处理
 import logging
@@ -153,7 +134,7 @@ import json
 import random
 import re
 import argparse
-import os
+
 
 import sys
 package_dir = '../input/ewrfcas'
