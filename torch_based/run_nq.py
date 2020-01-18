@@ -366,8 +366,8 @@ def make_submission(output_prediction_file, output_dir, long_thresh=-float("inf"
         :param entry: dict
         :return: str
         """
-        # if entry['answer_type'] == 0:
-        #     return ""
+        if entry['answer_type'] == 0:
+            return ""
         if entry["yes_no_answer"] != "NONE":
             return entry["yes_no_answer"]
         if entry["short_answers_score"] < short_thresh:
@@ -379,8 +379,8 @@ def make_submission(output_prediction_file, output_dir, long_thresh=-float("inf"
         return " ".join(answer)
 
     def create_long_answer(entry):
-        # if entry['answer_type'] == 0:
-        #     return ''
+        if entry['answer_type'] == 0:
+            return ''
         if entry["long_answer_score"] < long_thresh:
             return ""
 
@@ -411,7 +411,13 @@ def make_submission(output_prediction_file, output_dir, long_thresh=-float("inf"
     sample_submission.loc[
         sample_submission["example_id"].str.contains("_short"), "PredictionString"] = short_prediction_strings
 
-    sample_submission.to_csv(os.path.join(output_dir, "submission.csv"), index=False)
+    postfix = os.path.basename(output_prediction_file)
+    postfix = os.path.splitext(postfix)[0]
+    if long_thresh != -float("inf"):
+        postfix = "{}_LT{:.4f}".format(postfix, long_thresh)
+    if short_thresh != -float("inf"):
+        postfix = "{}_ST{:.4f}".format(postfix, short_thresh)
+    sample_submission.to_csv(os.path.join(output_dir, "submission_{}.csv".format(postfix)), index=False)
 
 
 def load_tfrecord(filename, evaluate=False):
@@ -783,4 +789,10 @@ def main():
 
 if __name__ == "__main__":
     # main()
-    make_submission("../output/models/albert-xxlarge-tfidf-600-top8-V0/test_predictions99997.json", "/users/liukanglong/", 0.5714843749999998, -0.3722656249999998)
+    # make_submission("../output/models/albert-xxlarge-tfidf-600-top8-V0/test_predictions99998.json", "/users/liukanglong/", 0.5714843749999998, -0.3722656249999998)
+    # make_submission("../output/models/albert-xxlarge-tfidf-600-top8-V0/test_predictions99998.json", "/users/liukanglong/")
+    # make_submission("../output/models/albert-xxlarge-tfidf-600-top8-V0/test_predictions99999.json", "/users/liukanglong/", 3.05078125, 0.7734375)
+    # make_submission("../output/models/albert-xxlarge-tfidf-600-top8-V0/test_predictions99999.json", "/users/liukanglong/")
+    # make_submission("../output/models/albert-xxlarge-tfidf-600-top8-V5/test_predictions.json", "/users/liukanglong/")
+    # make_submission("../output/models/albert-xxlarge-V0-ensemble/test_predictions_ensemble.json", "/users/liukanglong/", 8.5826171875, 4.979687500000001)
+    make_submission("../output/models/albert-xxlarge-V0-ensemble/test_predictions_ensemble.json", "/users/liukanglong/", 0.0, 0.0)

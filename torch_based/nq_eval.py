@@ -514,7 +514,7 @@ if __name__ == "__main__":
     from pprint import pprint
 
     predict_file = "../input/tensorflow2-question-answering/simplified-nq-dev.jsonl"
-    output_prediction_file = "../output/models/albert-xxlarge-tfidf-600-top8-V0/predictions99997.json"
+    output_prediction_file = "../output/models/albert-xxlarge-V0-ensemble/predictions_ensemble.json"
     print("Tuning for:", output_prediction_file)
     print('*' * 20)
     print('Metrics before threshold:')
