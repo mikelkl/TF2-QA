@@ -103,7 +103,7 @@ def to_list(tensor):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument("--gpu_ids", default="0,1,2,3,4,5,6,7", type=str)
+    parser.add_argument("--gpu_ids", default="4,5,6,7", type=str)
     parser.add_argument("--train_epochs", default=3, type=int)
     parser.add_argument("--train_batch_size", default=48, type=int)
     parser.add_argument("--eval_batch_size", default=128, type=int)
@@ -123,7 +123,8 @@ if __name__ == '__main__':
     parser.add_argument("--init_restore_dirs", default=['check_points/albert-xxlarge-tfidf-600-top8-V0',
                                                         'check_points/albert-xxlarge-tfidf-600-top8-V01',
                                                         'check_points/albert-xxlarge-tfidf-600-top8-V02',
-                                                        'check_points/albert-xxlarge-tfidf-600-top8-V03'], type=list)
+                                                        'check_points/albert-xxlarge-tfidf-600-top8-V03',
+                                                        'check_points/albert-xxlarge-tfidf-600-top8-V04'], type=list)
     parser.add_argument("--output_dir", default='check_points/albert-xxlarge-V0-ensemble', type=str)
     parser.add_argument("--log_file", default='log.txt', type=str)
 
@@ -152,16 +153,17 @@ if __name__ == '__main__':
 
     for i, init_dir in enumerate(init_dirs):
         print('Load weights from', init_dir)
-        model = AlBertJointForNQ2(bert_config)
-        model.load_state_dict(torch.load(init_dir, map_location='cpu'), strict=True)
-        if args.float16:
-            model.half()
-        model.to(device)
-        if n_gpu > 1:
-            model = torch.nn.DataParallel(model)
-
         output_prediction_file = os.path.join(args.output_dir, 'predictions{}.json'.format(i))
         if not os.path.exists(output_prediction_file):
+            model = AlBertJointForNQ2(bert_config)
+            model.load_state_dict(torch.load(init_dir, map_location='cpu'), strict=True)
+            if args.float16:
+                model.half()
+            model.to(device)
+            if n_gpu > 1:
+                model = torch.nn.DataParallel(model)
+
+
             evaluate(model, args, dev_features, device, i)
         else:
             print(output_prediction_file, 'exists, skip...')
@@ -214,7 +216,8 @@ if __name__ == '__main__':
                     else:
                         ensemble_pred_dict[example_id]['short_answer_dict'][
                             (short_answer['start_token'], short_answer['end_token'])] = pred['short_answers_score']
-                    ensemble_pred_dict[example_id]['answer_type_logits'] += np.array(answer_type_logits).astype(np.float64)
+                    ensemble_pred_dict[example_id]['answer_type_logits'] += np.array(answer_type_logits).astype(
+                        np.float64)
 
     final_preds = []
     for exp_id in ensemble_pred_dict:

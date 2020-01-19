@@ -767,6 +767,34 @@ def read_candidates_from_one_split(input_path):
     return candidates_dict
 
 
+def load_annotations_from_dev(input_path):
+    ground_truth_dict = {}
+    with open(input_path, "r") as input_file:
+        for index, line in tqdm(enumerate(input_file), desc="Reading"):
+            e = json.loads(line)
+            # 如果长答案均为空则忽略该样本
+            for annotation in e["annotations"]:
+                if annotation['long_answer']['candidate_index'] != -1:
+                    ground_truth_dict[e["example_id"]] = e["annotations"]
+                    break
+
+    return ground_truth_dict
+
+
+def load_all_annotations_from_dev(input_path):
+    ground_truth_dict = {}
+    with open(input_path, "r") as input_file:
+        for index, line in tqdm(enumerate(input_file), desc="Reading"):
+            e = json.loads(line)
+            # 如果长答案均为空则忽略该样本
+            ground_truth_dict[e["example_id"]] = {
+                'candidates': e['long_answer_candidates'],
+                'annotations': e["annotations"]
+            }
+
+    return ground_truth_dict
+
+
 def get_best_indexes(logits, n_best_size):
     """
     Get the n-best logits from a list.
@@ -1096,3 +1124,233 @@ def compute_pred_dict(candidates_dict, dev_features, raw_results,
         nq_pred_dict[e.example_id] = summary.predicted_label
 
     return nq_pred_dict
+
+
+def compute_long_predictions(example, n_best_size):
+    predictions = []
+    for feature, result in zip(example['features'], example['results']):
+        # convert dict-style token_to_orig_map to list-style token_map,
+        # key -> index, value -> element
+        # -1 indicate not belong to original doc
+        token_map = [-1] * len(feature.input_ids)
+        for k, v in feature.token_to_orig_map.items():
+            token_map[k] = v
+        token_map = np.array(token_map)
+        feature_length = np.sum(feature.input_mask)
+        start_topk_indexs = np.argsort(result.long_start_logits)[::-1][:n_best_size]
+        end_topk_indexs = np.argsort(result.long_end_logits)[::-1][:n_best_size]
+        long_cls_score = result.long_start_logits[0] + result.long_end_logits[0]
+
+        for long_start_index in start_topk_indexs:
+            for long_end_index in end_topk_indexs:
+                if long_start_index >= feature_length:
+                    continue
+                if long_end_index >= feature_length:
+                    continue
+                if long_start_index > long_end_index:
+                    continue
+                if long_start_index != 0 or token_map[long_start_index] == -1:
+                    continue
+                if long_end_index != 0 or token_map[long_end_index] == -1:
+                    continue
+
+                # if token_map[long_start_index] == -1:
+                #     continue
+                # if token_map[long_end_index] == -1:
+                #     continue
+
+                if long_start_index != 0:
+                    rel_long_start_index = token_map[long_start_index]
+                else:
+                    rel_long_start_index = -1
+                if long_end_index != 0:
+                    rel_long_end_index = token_map[long_end_index] + 1
+                else:
+                    rel_long_end_index = -1
+
+                long_span_score = result.long_start_logits[long_start_index] + \
+                                  result.long_end_logits[long_end_index]
+                # 因为保留了cls的情况，所以这里long_score最低也是0，即real_index均为-1
+                # 也就是说只要一个example存在一个doc_span有答案的logits高于cls_logits，就算有答案
+                # 如果所有doc_span最高的均为cls，则表示都么得答案
+                long_score = long_span_score - long_cls_score
+                predictions.append((long_score, rel_long_start_index, rel_long_end_index))
+
+    long_span = Span(-1, -1)
+    if predictions:
+        long_score, long_start_span, long_end_span = sorted(predictions, key=lambda x: x[0], reverse=True)[0]
+        if long_start_span == -1 or long_end_span == -1:
+            long_span = Span(-1, -1)
+        else:
+            long_span = Span(long_start_span, long_end_span)
+            best_long_span = Span(long_start_span, long_end_span)
+            # 对于长答案，我们从candidates里选择最接近的一组cand
+            min_dis = 99999
+            for c in example['candidates']:
+                # if c['top_level'] is False:
+                #     continue
+
+                start = long_span.start_token_idx
+                end = long_span.end_token_idx
+
+                index_dis = abs(start - c["start_token"]) + abs(end - c["end_token"])
+                if index_dis < min_dis:
+                    min_dis = index_dis
+                    best_long_span = Span(c["start_token"], c["end_token"])
+            long_span = best_long_span
+    else:
+        long_score = 0
+
+    pred_result = {
+        "long_answer": {
+            "start_token": int(long_span.start_token_idx),
+            "end_token": int(long_span.end_token_idx),
+            "start_byte": -1,
+            "end_byte": -1
+        },
+        "long_answer_score": float(long_score),
+        "short_answers": [{
+            "start_token": -1,
+            "end_token": -1,
+            "start_byte": -1,
+            "end_byte": -1
+        }],
+        "short_answers_score": 0.0,
+        "yes_no_answer": "NONE",
+        "answer_type": 0 if long_span.start_token_idx == -1 else 4
+    }
+
+    return pred_result
+
+
+def compute_short_predictions(example, n_best_size, max_answer_length):
+    predictions = []
+    for feature, result in zip(example['features'], example['results']):
+        # convert dict-style token_to_orig_map to list-style token_map,
+        # key -> index, value -> element
+        # -1 indicate not belong to original doc
+        token_map = [-1] * len(feature.input_ids)
+        for k, v in feature.token_to_orig_map.items():
+            token_map[k] = v
+        token_map = np.array(token_map)
+        feature_length = np.sum(feature.input_mask)
+        start_topk_indexs = np.argsort(result.short_start_logits)[::-1][:n_best_size]
+        end_topk_indexs = np.argsort(result.short_end_logits)[::-1][:n_best_size]
+        short_cls_score = result.short_start_logits[0] + result.short_end_logits[0]
+
+        for short_start_index in start_topk_indexs:
+            for short_end_index in end_topk_indexs:
+                if short_start_index >= feature_length:
+                    continue
+                if short_end_index >= feature_length:
+                    continue
+                if short_start_index > short_end_index:
+                    continue
+                if token_map[short_start_index] == -1:
+                    continue
+                if token_map[short_end_index] == -1:
+                    continue
+                rel_short_start_index = token_map[short_start_index]
+                rel_short_end_index = token_map[short_end_index] + 1
+                if rel_short_end_index - rel_short_start_index > max_answer_length:
+                    continue
+
+                short_span_score = result.short_start_logits[short_start_index] + \
+                                   result.short_end_logits[short_end_index]
+                answer_type_logits = result.answer_type_logits - np.array(result.answer_type_logits).mean()
+                short_score = short_span_score - short_cls_score - answer_type_logits[0]
+                predictions.append((short_score, answer_type_logits, rel_short_start_index, rel_short_end_index))
+
+    short_span = Span(-1, -1)
+    if predictions:
+        short_score, answer_type_logits, short_start_span, short_end_span = \
+            sorted(predictions, key=lambda x: x[0], reverse=True)[0]
+        short_span = Span(short_start_span, short_end_span)
+    else:
+        answer_type_logits = np.array([0] * 4)
+        short_score = 0
+
+    answer_type = int(np.argmax(answer_type_logits))
+    if answer_type == AnswerType.YES:
+        yes_no_answer = "YES"
+    elif answer_type == AnswerType.NO:
+        yes_no_answer = "NO"
+    else:
+        yes_no_answer = "NONE"
+
+    pred_result = {
+        'short_start': int(short_span.start_token_idx) if answer_type == AnswerType.SHORT else -1,
+        'short_end': int(short_span.end_token_idx) if answer_type == AnswerType.SHORT else -1,
+        'answer_type': answer_type,
+        'short_score': float(short_score),
+        'answer_type_logits': list(answer_type_logits.astype(float)),
+        'yes_no_answer': yes_no_answer,
+    }
+
+    return pred_result
+
+
+def compute_short_pred(dev_features, raw_results, n_best_size=10, max_answer_length=30):
+    example_dict = {}
+    for feature, result in zip(dev_features, raw_results):
+        if feature.example_index not in example_dict:
+            example_dict[feature.example_index] = {}
+            example_dict[feature.example_index]['results'] = [result]
+            example_dict[feature.example_index]['features'] = [feature]
+        else:
+            example_dict[feature.example_index]['results'].append(result)
+            example_dict[feature.example_index]['features'].append(feature)
+
+    pred_dict = {}
+    for example_id in tqdm(example_dict, desc="Computing predictions..."):
+        pred_exp_dict = compute_short_predictions(example_dict[example_id], n_best_size, max_answer_length)
+        pred_dict[example_id] = pred_exp_dict
+
+    return pred_dict
+
+
+def compute_long_pred(ground_truth_dict, dev_features, raw_results, n_best_size=10):
+    example_dict = {}
+    for feature, result in zip(dev_features, raw_results):
+        if feature.example_index not in example_dict:
+            example_dict[feature.example_index] = {}
+            example_dict[feature.example_index]['results'] = [result]
+            example_dict[feature.example_index]['features'] = [feature]
+            example_dict[feature.example_index]['candidates'] = ground_truth_dict[feature.example_index]['candidates']
+        else:
+            example_dict[feature.example_index]['results'].append(result)
+            example_dict[feature.example_index]['features'].append(feature)
+
+    pred_dict = {}
+    for example_id in tqdm(example_dict, desc="Computing predictions..."):
+        pred_exp_dict = compute_long_predictions(example_dict[example_id], n_best_size)
+        pred_exp_dict['example_id'] = example_id
+        pred_dict[example_id] = pred_exp_dict
+
+    return pred_dict
+
+def combine_long_short(short_pred_dict, long_pred_file):
+    long_preds = json.load(open(long_pred_file))['predictions']
+
+    for pred in long_preds:
+        example_id = pred['example_id']
+        if example_id not in short_pred_dict:
+            pred['short_answers'] = [{
+                'start_token': -1,
+                'end_token': -1,
+                'start_byte': -1,
+                'end_byte': -1
+            }]
+            pred['short_answers_score'] = 0
+            pred['yes_no_answer'] = "NONE"
+        else:
+            pred['short_answers'] = [{
+                'start_token': short_pred_dict[example_id]['short_start'],
+                'end_token': short_pred_dict[example_id]['short_end'],
+                'start_byte': -1,
+                'end_byte': -1
+            }]
+            pred['short_answers_score'] = short_pred_dict[example_id]['short_score']
+            pred['yes_no_answer'] = short_pred_dict[example_id]['yes_no_answer']
+
+    return long_preds

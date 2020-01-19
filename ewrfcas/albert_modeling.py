@@ -661,3 +661,79 @@ class AlBertJointForNQ2(nn.Module):
             }
 
             return outputs
+
+
+class AlBertJointForShort(nn.Module):
+    def __init__(self, config, class_num=4):
+        super(AlBertJointForShort, self).__init__()
+        self.num_labels = class_num
+        self.config = config
+
+        self.bert = AlbertModel(config)
+        # long这里可以复用squad的权重，所以命名为finetune_mrc
+        self.finetune_mrc = MRC_finetune(config)
+        self.cls_dropout = nn.Dropout(config.hidden_dropout_prob)
+        self.answer_types_outputs = nn.Linear(config.hidden_size, self.num_labels)
+
+        self.apply(self.init_bert_weights)
+
+    def init_bert_weights(self, module):
+        """ Initialize the weights.
+        """
+        if isinstance(module, (nn.Linear, nn.Embedding)):
+            # Slightly different from the TF version which uses truncated_normal for initialization
+            # cf https://github.com/pytorch/pytorch/pull/5617
+            module.weight.data.normal_(mean=0.0, std=self.config.initializer_range)
+        elif isinstance(module, BertLayerNorm):
+            module.bias.data.normal_(mean=0.0, std=self.config.initializer_range)
+            module.weight.data.normal_(mean=0.0, std=self.config.initializer_range)
+        if isinstance(module, nn.Linear) and module.bias is not None:
+            module.bias.data.zero_()
+
+    def forward(self, input_ids, attention_mask=None, token_type_ids=None,
+                start_positions=None, end_positions=None, answer_types=None):
+
+        outputs = self.bert(input_ids,
+                            attention_mask=attention_mask,
+                            token_type_ids=token_type_ids,
+                            output_all_encoded_layers=False)
+
+        sequence_output = outputs[0]
+        pooled_output = outputs[1]
+
+        start_logits, end_logits = self.finetune_mrc(sequence_output)
+        start_logits = start_logits.squeeze(-1)
+        end_logits = end_logits.squeeze(-1)
+        pooled_output = self.cls_dropout(pooled_output)
+        answer_type_logits = self.answer_types_outputs(pooled_output)
+
+        # training process
+        if start_positions is not None and end_positions is not None and answer_types is not None:
+            # If we are on multi-GPU, split add a dimension
+            if len(start_positions.size()) > 1:
+                start_positions = start_positions.squeeze(-1)
+            if len(end_positions.size()) > 1:
+                end_positions = end_positions.squeeze(-1)
+            if len(answer_types.size()) > 1:
+                answer_types = answer_types.squeeze(-1)
+
+            # loss setting
+            ignored_index = start_logits.size(1)
+            start_positions.clamp_(0, ignored_index)
+            end_positions.clamp_(0, ignored_index)
+            loss_fct = CrossEntropyLoss(ignore_index=ignored_index)
+
+            # short loss
+            short_start_loss = loss_fct(start_logits, start_positions)
+            short_end_loss = loss_fct(end_logits, end_positions)
+
+            # answer_type_loss
+            answer_type_loss = loss_fct(answer_type_logits, answer_types)
+
+            total_loss = (short_start_loss + short_end_loss + answer_type_loss) / 3
+
+            return total_loss
+
+        else:
+
+            return start_logits, end_logits, answer_type_logits

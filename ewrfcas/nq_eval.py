@@ -435,3 +435,88 @@ def get_metrics_with_answer_stats(long_answer_stats, short_answer_stats):
             'short_span_wrong': short_span_wrong
         }, w, indent=2)
     return metrics
+
+
+def pred_hit_one(pred, gt_annotations):
+    for gt_ in gt_annotations:
+        if gt_['yes_no_answer'] != 'NONE' and gt_['yes_no_answer'] == pred['yes_no_answer']:
+            return True
+        elif gt_['yes_no_answer'] == pred['yes_no_answer'] and len(gt_['spans']) > 0:
+            for span in gt_['spans']:
+                if span['start_token'] == pred['short_start'] and span['end_token'] == pred['short_end']:
+                    return True
+    return False
+
+
+def get_metrics_short(ground_truth_dict, nq_pred_dict):
+    tp = fp = fn = 0.
+    for example_id in ground_truth_dict:
+        gt = ground_truth_dict[example_id]
+        pred = nq_pred_dict[example_id]
+
+        # >=2个有答案认为是有短答案的
+        gt_annotations = []
+        for gt_ in gt:
+            if len(gt_['short_answers']) > 0 or gt_['yes_no_answer'] in ('YES', 'NO'):
+                gt_annotations.append({'spans': gt_['short_answers'], 'yes_no_answer': gt_['yes_no_answer']})
+
+        if len(gt_annotations) >= 2:
+            if pred['answer_type'] == 0:
+                fn += 1
+            else:
+                if pred_hit_one(pred, gt_annotations):
+                    tp += 1
+                else:
+                    fp += 1
+
+    f1 = safe_divide(2 * tp, 2 * tp + fp + fn)
+    precision = safe_divide(tp, tp + fp)
+    recall = safe_divide(tp, tp + fn)
+
+    metrics = OrderedDict({
+        'f1': f1,
+        'precision': precision,
+        'recall': recall,
+    })
+
+    return metrics
+
+
+# def get_metrics_long(ground_truth_dict, nq_pred_dict):
+#     tp = fp = fn = 0.
+#     for example_id in ground_truth_dict:
+#         gt = ground_truth_dict[example_id]['annotations']
+#         pred = nq_pred_dict[example_id]['long_answer']
+#
+#         # >=2个有答案认为是有答案的
+#         gt_annotations = []
+#         for gt_ in gt:
+#             if gt_['long_answer']['candidate_index'] != -1:
+#                 gt_annotations.append((gt_['long_answer']['start_token'], gt_['long_answer']['end_token']))
+#
+#         if len(gt_annotations) >= 2:
+#             if pred['start_token'] == -1 or pred['end_token'] == -1:
+#                 fn += 1
+#             else:
+#                 hit_one = False  # 是否至少中一个？
+#                 for (gt_start, gt_end) in gt_annotations:
+#                     if gt_start == pred['start_token'] and gt_end == pred['end_token']:
+#                         hit_one = True
+#                         break
+#
+#                 if hit_one:
+#                     tp += 1
+#                 else:
+#                     fp += 1
+#
+#     f1 = safe_divide(2 * tp, 2 * tp + fp + fn)
+#     precision = safe_divide(tp, tp + fp)
+#     recall = safe_divide(tp, tp + fn)
+#
+#     metrics = OrderedDict({
+#         'f1': f1,
+#         'precision': precision,
+#         'recall': recall,
+#     })
+#
+#     return metrics
