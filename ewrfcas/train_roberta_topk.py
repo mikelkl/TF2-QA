@@ -1,6 +1,6 @@
 import torch
 import argparse
-from roberta_modeling import RobertaJointForLong
+from roberta_modeling import RobertaJointForNQ2
 from transformers.modeling_roberta import RobertaConfig, RobertaModel
 from torch.utils.data import TensorDataset, DataLoader
 import utils
@@ -12,14 +12,17 @@ import json
 import collections
 import pickle
 from nq_eval import get_metrics_as_dict
-from utils_nq import load_all_annotations_from_dev, compute_long_predictions
-from roberta_long_preprocess import InputLongFeatures
+from utils_nq import read_candidates_from_one_split, compute_pred_dict, InputLSFeatures
 from pytorch_optimization import get_optimization, warmup_linear
 
 RawResult = collections.namedtuple("RawResult",
                                    ["unique_id",
-                                    "long_start_logits",
-                                    "long_end_logits"])
+                                    "long_start_topk_logits", "long_start_topk_index",
+                                    "long_end_topk_logits", "long_end_topk_index",
+                                    "short_start_topk_logits", "short_start_topk_index",
+                                    "short_end_topk_logits", "short_end_topk_index",
+                                    "long_cls_logits", "short_cls_logits",
+                                    "answer_type_logits"])
 
 
 def check_args(args):
@@ -51,22 +54,36 @@ def evaluate(model, args, dev_features, device, global_steps):
             inputs = {'input_ids': input_ids,
                       'attention_mask': input_mask,
                       'token_type_ids': segment_ids}
-            start_logits, end_logits = model(**inputs)
+            outputs = model(**inputs)
 
         for i, example_index in enumerate(example_indices):
             eval_feature = dev_features[example_index.item()]
             unique_id = str(eval_feature.unique_id)
 
             result = RawResult(unique_id=unique_id,
-                               long_start_logits=start_logits[i].cpu().numpy(),
-                               long_end_logits=end_logits[i].cpu().numpy())
+                               # [topk]
+                               long_start_topk_logits=outputs['long_start_topk_logits'][i].cpu().numpy(),
+                               long_start_topk_index=outputs['long_start_topk_index'][i].cpu().numpy(),
+                               long_end_topk_logits=outputs['long_end_topk_logits'][i].cpu().numpy(),
+                               long_end_topk_index=outputs['long_end_topk_index'][i].cpu().numpy(),
+                               # [topk, topk]
+                               short_start_topk_logits=outputs['short_start_topk_logits'][i].cpu().numpy(),
+                               short_start_topk_index=outputs['short_start_topk_index'][i].cpu().numpy(),
+                               short_end_topk_logits=outputs['short_end_topk_logits'][i].cpu().numpy(),
+                               short_end_topk_index=outputs['short_end_topk_index'][i].cpu().numpy(),
+                               answer_type_logits=to_list(outputs['answer_type_logits'][i]),
+                               long_cls_logits=outputs['long_cls_logits'][i].cpu().numpy(),
+                               short_cls_logits=outputs['short_cls_logits'][i].cpu().numpy())
             all_results.append(result)
 
     pickle.dump(all_results, open(os.path.join(args.output_dir, 'RawResults.pkl'), 'wb'))
     # all_results = pickle.load(open(os.path.join(args.output_dir, 'RawResults.pkl'), 'rb'))
 
-    ground_truth_dict = load_all_annotations_from_dev(args.predict_file)
-    nq_pred_dict = compute_long_pred(ground_truth_dict, dev_features, all_results, args.n_best_size)
+    candidates_dict = read_candidates_from_one_split(args.predict_file)
+    nq_pred_dict = compute_pred_dict(candidates_dict, dev_features,
+                                     [r._asdict() for r in all_results],
+                                     args.n_best_size, args.max_answer_length, topk_pred=True,
+                                     long_n_top=5, short_n_top=5)
 
     output_prediction_file = os.path.join(args.output_dir, 'predictions' + str(global_steps) + '.json')
     with open(output_prediction_file, 'w') as f:
@@ -92,9 +109,15 @@ def load_cached_data(feature_dir, output_features=False, evaluate=False):
         all_example_index = torch.arange(all_input_ids.size(0), dtype=torch.long)
         dataset = TensorDataset(all_input_ids, all_input_mask, all_segment_ids, all_example_index)
     else:
-        all_start_positions = torch.tensor([f.start_position for f in features], dtype=torch.long)
-        all_end_positions = torch.tensor([f.end_position for f in features], dtype=torch.long)
-        dataset = TensorDataset(all_input_ids, all_input_mask, all_segment_ids, all_start_positions, all_end_positions)
+        all_long_start_positions = torch.tensor([f.long_start_position for f in features], dtype=torch.long)
+        all_long_end_positions = torch.tensor([f.long_end_position for f in features], dtype=torch.long)
+        all_short_start_positions = torch.tensor([f.short_start_position for f in features], dtype=torch.long)
+        all_short_end_positions = torch.tensor([f.short_end_position for f in features], dtype=torch.long)
+        all_answer_types = torch.tensor([f.answer_type for f in features], dtype=torch.long)
+        dataset = TensorDataset(all_input_ids, all_input_mask, all_segment_ids,
+                                all_long_start_positions, all_long_end_positions,
+                                all_short_start_positions, all_short_end_positions,
+                                all_answer_types)
 
     if output_features:
         return dataset, features
@@ -107,9 +130,9 @@ def to_list(tensor):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument("--gpu_ids", default="0,1,2,3,4,5,6,7", type=str)
+    parser.add_argument("--gpu_ids", default="2,3,4,5,6,7", type=str)
     parser.add_argument("--train_epochs", default=2, type=int)
-    parser.add_argument("--train_batch_size", default=32, type=int)
+    parser.add_argument("--train_batch_size", default=48, type=int)
     parser.add_argument("--eval_batch_size", default=64, type=int)
     parser.add_argument("--n_best_size", default=20, type=int)
     parser.add_argument("--max_answer_length", default=30, type=int)
@@ -125,14 +148,14 @@ if __name__ == '__main__':
 
     parser.add_argument("--bert_config_file", default='roberta_large/config.json', type=str)
     parser.add_argument("--init_restore_dir", default='roberta_large/roberta_large_squad_extend.pth', type=str)
-    parser.add_argument("--output_dir", default='check_points/roberta-large-long-V00', type=str)
+    parser.add_argument("--output_dir", default='check_points/roberta-large-tfidf-600-top8-V0', type=str)
     parser.add_argument("--log_file", default='log.txt', type=str)
     parser.add_argument("--setting_file", default='setting.txt', type=str)
 
     parser.add_argument("--predict_file", default='data/simplified-nq-dev.jsonl', type=str)
-    parser.add_argument("--train_feat_dir", default='dataset/train_data_maxlen512_roberta_tfidf_features.bin',
+    parser.add_argument("--train_feat_dir", default='dataset/train_data_maxlen512_roberta_tfidf_ls_features.bin',
                         type=str)
-    parser.add_argument("--dev_feat_dir", default='dataset/dev_data_maxlen512_roberta_tfidf_features.bin',
+    parser.add_argument("--dev_feat_dir", default='dataset/dev_data_maxlen512_roberta_tfidf_ls_features.bin',
                         type=str)
 
     args = parser.parse_args()
@@ -173,7 +196,7 @@ if __name__ == '__main__':
     print('warmup steps:', int(args.warmup_rate * total_steps))
 
     bert_config = RobertaConfig.from_json_file(args.bert_config_file)
-    model = RobertaJointForLong(RobertaModel(bert_config), bert_config)
+    model = RobertaJointForNQ2(bert_config, long_n_top=5, short_n_top=5)
     utils.torch_show_all_params(model)
     utils.torch_init_model(model, args.init_restore_dir)
     if args.float16:
@@ -191,9 +214,7 @@ if __name__ == '__main__':
                                  warmup_rate=args.warmup_rate,
                                  max_grad_norm=args.clip_norm,
                                  weight_decay_rate=args.weight_decay_rate,
-                                 opt_pooler=False)  # 只做长答案不需要做answer_type分类
-
-    results = evaluate(model, args, dev_features, device, 0)
+                                 opt_pooler=True)
 
     # Train!
     print('***** Training *****')
@@ -208,12 +229,17 @@ if __name__ == '__main__':
             for step, batch in enumerate(train_dataloader):
                 batch = tuple(t.to(device) for t in batch)
                 input_ids, input_mask, segment_ids, \
-                start_positions, end_positions = batch
+                long_start_positions, long_end_positions, \
+                short_start_positions, short_end_positions, \
+                answer_type = batch
                 inputs = {'input_ids': input_ids,
                           'attention_mask': input_mask,
                           'token_type_ids': segment_ids,
-                          'start_positions': start_positions,
-                          'end_positions': end_positions}
+                          'long_start_positions': long_start_positions,
+                          'long_end_positions': long_end_positions,
+                          'short_start_positions': short_start_positions,
+                          'short_end_positions': short_end_positions,
+                          'answer_types': answer_type}
                 loss = model(**inputs)
                 if n_gpu > 1:
                     loss = loss.mean()  # mean() to average on multi-gpu.
@@ -242,8 +268,8 @@ if __name__ == '__main__':
                         aw.write("--------------steps:{}--------------\n".format(global_steps))
                         aw.write(str(json.dumps(results, indent=2)) + '\n')
 
-                    if results['long-f1'] >= best_f1:
-                        best_f1 = results['long-f1:']
+                    if results['all-f1'] >= best_f1:
+                        best_f1 = results['all-f1']
                         print('Best f1:', best_f1)
                         model_to_save = model.module if hasattr(model, 'module') else model
                         torch.save(model_to_save.state_dict(),

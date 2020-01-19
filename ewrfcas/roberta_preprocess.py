@@ -10,7 +10,7 @@ import random
 import re
 import argparse
 import os
-from transformers.tokenization_roberta import RobertaTokenizer
+import transformers.tokenization_roberta as tokenization
 import torch
 
 logger = logging.getLogger(__name__)
@@ -108,25 +108,28 @@ def get_candidate_type(candidate_tokens):
         return "Other"
 
 
-# A special token in NQ is made of non-space chars enclosed in square brackets.
-_SPECIAL_TOKENS_RE = re.compile(r"^\[[^ ]*\]$", re.UNICODE)
+EX_TOKEN_MAP = json.load(open('roberta_large/ex_token_map.json'))
 
 
 def roberta_tokenize(tokenizer, text):
     tokens = []
     for token in text.split(" "):
-        if _SPECIAL_TOKENS_RE.match(token) or token in tokenizer.EX_TOKEN_MAP:
-            if token in tokenizer.vocab or token in tokenizer.EX_TOKEN_MAP:
-                tokens.append(token)
-            else:
-                tokens.append(tokenizer.wordpiece_tokenizer.unk_token)
+        if token in EX_TOKEN_MAP:
+            tokens.append(token)
         else:
-            sub_tokens = tokenization.encode_pieces(
-                tokenizer.sp_model,
-                tokenization.preprocess_text(token, lower=True),
-                return_unicode=False)
+            sub_tokens = tokenizer._tokenize(token, add_prefix_space=True)
             tokens.extend(sub_tokens)
     return tokens
+
+
+def roberta_convert_tokens_to_ids(tokenizer, tokens):
+    output_ids = []
+    for token in tokens:
+        if token in EX_TOKEN_MAP:
+            output_ids.append(EX_TOKEN_MAP[token])
+        else:
+            output_ids.append(tokenizer._convert_token_to_id(token))
+    return output_ids
 
 
 def check_is_max_context(doc_spans, cur_span_index, position):
@@ -429,7 +432,7 @@ def convert_single_example(example, tokenizer, is_training, args):
     features = []
     for (i, token) in enumerate(example['paragraph_tokens']):
         orig_to_tok_index.append(len(all_doc_tokens))
-        sub_tokens = albert_tokenize(tokenizer, token)
+        sub_tokens = roberta_tokenize(tokenizer, token)
         tok_to_orig_index.extend([i] * len(sub_tokens))
         all_doc_tokens.extend(sub_tokens)
 
@@ -441,7 +444,7 @@ def convert_single_example(example, tokenizer, is_training, args):
     # QUERY
     query_tokens = []
     query_tokens.append("[Q]")
-    query_tokens.extend(albert_tokenize(tokenizer, example['question_text']))
+    query_tokens.extend(roberta_tokenize(tokenizer, example['question_text']))
     if len(query_tokens) > args.max_query_length:
         query_tokens = query_tokens[-args.max_query_length:]
 
@@ -495,11 +498,11 @@ def convert_single_example(example, tokenizer, is_training, args):
         token_to_orig_map = {}
         token_is_max_context = {}
         segment_ids = []
-        tokens.append("[CLS]")
-        segment_ids.append(0)
+        tokens.append("<cls>")
+        segment_ids.append(0)  # roberta的segment_id全0
         tokens.extend(query_tokens)
         segment_ids.extend([0] * len(query_tokens))
-        tokens.append("[SEP]")
+        tokens.append("<sep>")
         segment_ids.append(0)
 
         for i in range(doc_span.length):
@@ -509,22 +512,24 @@ def convert_single_example(example, tokenizer, is_training, args):
             is_max_context = check_is_max_context(doc_spans, doc_span_index, split_token_index)
             token_is_max_context[len(tokens)] = is_max_context
             tokens.append(all_doc_tokens[split_token_index])
-            segment_ids.append(1)
-        tokens.append("[SEP]")
-        segment_ids.append(1)
+            segment_ids.append(0)
+        tokens.append("<sep>")
+        segment_ids.append(0)
         assert len(tokens) == len(segment_ids)
 
-        input_ids = tokenizer.convert_tokens_to_ids(tokens)
+        input_ids = roberta_convert_tokens_to_ids(tokenizer, tokens)
 
         # The mask has 1 for real tokens and 0 for padding tokens. Only real
         # tokens are attended to.
         input_mask = [1] * len(input_ids)
 
         # Zero-pad up to the sequence length.
-        padding = [0] * (args.max_seq_length - len(input_ids))
-        input_ids.extend(padding)
-        input_mask.extend(padding)
-        segment_ids.extend(padding)
+        # roberta的mask为1
+        one_padding = [1] * (args.max_seq_length - len(input_ids))
+        zero_padding = [0] * (args.max_seq_length - len(input_ids))
+        input_ids.extend(one_padding)
+        input_mask.extend(zero_padding)
+        segment_ids.extend(zero_padding)
 
         assert len(input_ids) == args.max_seq_length
         assert len(input_mask) == args.max_seq_length
@@ -556,8 +561,8 @@ def convert_single_example(example, tokenizer, is_training, args):
                 # 如果是短答案，对一下答案是否正确
                 if example['answer_type'] == AnswerType['SHORT']:
                     answer_text = " ".join(tokens[start_position:(end_position + 1)])
-                    answer_text = answer_text.replace(' ', '').replace(u"▁", ' ').strip()
-                    gt_answer = example['short_answer_text'].lower()
+                    answer_text = answer_text.replace(' ', '').replace(u"Ġ", ' ').strip()
+                    gt_answer = example['short_answer_text']
                     answer_text_chars = [c for c in answer_text if c not in " \t\r\n" and ord(c) != 0x202F]
                     gt_answer_chars = [c for c in gt_answer if c not in " \t\r\n" and ord(c) != 0x202F]
                     if "".join(answer_text_chars) != "".join(gt_answer_chars):
@@ -603,7 +608,7 @@ def convert_single_ls_example(example, tokenizer, is_training, args):
     # QUERY
     query_tokens = []
     query_tokens.append("[Q]")
-    query_tokens.extend(albert_tokenize(tokenizer, example['question_text']))
+    query_tokens.extend(roberta_tokenize(tokenizer, example['question_text']))
     if len(query_tokens) > args.max_query_length:
         query_tokens = query_tokens[-args.max_query_length:]
 
@@ -654,11 +659,11 @@ def convert_single_ls_example(example, tokenizer, is_training, args):
         token_to_orig_map = {}
         token_is_max_context = {}
         segment_ids = []
-        tokens.append("[CLS]")
-        segment_ids.append(0)
+        tokens.append("<cls>")
+        segment_ids.append(0)  # roberta的segment_id全0
         tokens.extend(query_tokens)
         segment_ids.extend([0] * len(query_tokens))
-        tokens.append("[SEP]")
+        tokens.append("<sep>")
         segment_ids.append(0)
 
         for i in range(doc_span.length):
@@ -669,21 +674,23 @@ def convert_single_ls_example(example, tokenizer, is_training, args):
             token_is_max_context[len(tokens)] = is_max_context
             tokens.append(all_doc_tokens[split_token_index])
             segment_ids.append(1)
-        tokens.append("[SEP]")
-        segment_ids.append(1)
+        tokens.append("<sep>")
+        segment_ids.append(0)
         assert len(tokens) == len(segment_ids)
 
-        input_ids = tokenizer.convert_tokens_to_ids(tokens)
+        input_ids = roberta_convert_tokens_to_ids(tokenizer, tokens)
 
         # The mask has 1 for real tokens and 0 for padding tokens. Only real
         # tokens are attended to.
         input_mask = [1] * len(input_ids)
 
         # Zero-pad up to the sequence length.
-        padding = [0] * (args.max_seq_length - len(input_ids))
-        input_ids.extend(padding)
-        input_mask.extend(padding)
-        segment_ids.extend(padding)
+        # roberta的mask为1
+        one_padding = [1] * (args.max_seq_length - len(input_ids))
+        zero_padding = [0] * (args.max_seq_length - len(input_ids))
+        input_ids.extend(one_padding)
+        input_mask.extend(zero_padding)
+        segment_ids.extend(zero_padding)
 
         assert len(input_ids) == args.max_seq_length
         assert len(input_mask) == args.max_seq_length
@@ -725,8 +732,8 @@ def convert_single_ls_example(example, tokenizer, is_training, args):
                 # 如果是短答案，对一下答案是否正确
                 if example['answer_type'] == AnswerType['SHORT']:
                     answer_text = " ".join(tokens[short_start_position:(short_end_position + 1)])
-                    answer_text = answer_text.replace(' ', '').replace(u"▁", ' ').strip()
-                    gt_answer = example['short_answer_text'].lower()
+                    answer_text = answer_text.replace(' ', '').replace(u"Ġ", ' ').strip()
+                    gt_answer = example['short_answer_text']
                     answer_text_chars = [c for c in answer_text if c not in " \t\r\n" and ord(c) != 0x202F]
                     gt_answer_chars = [c for c in gt_answer if c not in " \t\r\n" and ord(c) != 0x202F]
                     if "".join(answer_text_chars) != "".join(gt_answer_chars) \
@@ -758,7 +765,7 @@ def convert_single_ls_example(example, tokenizer, is_training, args):
 if __name__ == '__main__':
     # parameters
     parser = argparse.ArgumentParser()
-    parser.add_argument("--train_file", default='data/tiny-train.jsonl', type=str,
+    parser.add_argument("--train_file", default='data/simplified-nq-train.jsonl', type=str,
                         help="NQ json for training. E.g., simplified-nq-train.jsonl")
     parser.add_argument("--dev_file", default='data/simplified-nq-dev.jsonl', type=str,
                         help="NQ json for predictions. E.g., simplified-nq-test.jsonl")
@@ -797,14 +804,13 @@ if __name__ == '__main__':
     #     args.include_unknowns = args.include_unknowns * args.example_neg_filter
 
     random.seed(args.seed)
-
-    tokenizer = RobertaTokenizer(vocab_file='roberta-large/roberta-large-vocab.json',
-        merges_file='roberta-large/roberta-large-merges.txt')
+    tokenizer = tokenization.RobertaTokenizer(vocab_file='roberta_large/vocab.json',
+                                              merges_file='roberta_large/merges.txt')
     # train preprocess
     example_output_file = os.path.join(args.output_dir,
                                        'train_data_maxlen{}_tfidf_examples.json'.format(args.max_seq_length))
     feature_output_file = os.path.join(args.output_dir,
-                                       'train_data_maxlen{}_albert_tfidf_features.bin'.format(args.max_seq_length))
+                                       'train_data_maxlen{}_roberta_tfidf_features.bin'.format(args.max_seq_length))
     if args.do_ls:
         feature_output_file = feature_output_file.replace('_features', '_ls_features')
     if args.do_combine:
@@ -822,43 +828,43 @@ if __name__ == '__main__':
         torch.save(features, feature_output_file)
 
     # dev preprocess
-    # example_output_file = os.path.join(args.output_dir,
-    #                                    'dev_data_maxlen{}_tfidf_examples.json'.format(args.max_seq_length))
-    # feature_output_file = os.path.join(args.output_dir,
-    #                                    'dev_data_maxlen{}_albert_tfidf_features.bin'.format(args.max_seq_length))
-    # if args.do_ls:
-    #     feature_output_file = feature_output_file.replace('_features', '_ls_features')
-    # if args.do_combine:
-    #     example_output_file = example_output_file.replace('_examples', '_combine_examples')
-    #     feature_output_file = feature_output_file.replace('_features', '_combine_features')
-    # if not os.path.exists(feature_output_file):
-    #     tfidf_dict = json.load(open(args.tfidf_dev_file))
-    #     if os.path.exists(example_output_file):
-    #         examples = json.load(open(example_output_file))
-    #     else:
-    #         examples = read_nq_examples(input_file=args.dev_file, tfidf_dict=tfidf_dict, is_training=False, args=args)
-    #         with open(example_output_file, 'w') as w:
-    #             json.dump(examples, w)
-    #     features = convert_examples_to_features(examples=examples, tokenizer=tokenizer, is_training=False, args=args)
-    #     torch.save(features, feature_output_file)
-    #
-    # # test preprocess
-    # example_output_file = os.path.join(args.output_dir,
-    #                                    'test_data_maxlen{}_tfidf_examples.json'.format(args.max_seq_length))
-    # feature_output_file = os.path.join(args.output_dir,
-    #                                    'test_data_maxlen{}_albert_tfidf_features.bin'.format(args.max_seq_length))
-    # if args.do_ls:
-    #     feature_output_file = feature_output_file.replace('_features', '_ls_features')
-    # if args.do_combine:
-    #     example_output_file = example_output_file.replace('_examples', '_combine_examples')
-    #     feature_output_file = feature_output_file.replace('_features', '_combine_features')
-    # if not os.path.exists(feature_output_file):
-    #     tfidf_dict = json.load(open(args.tfidf_test_file))
-    #     if os.path.exists(example_output_file):
-    #         examples = json.load(open(example_output_file))
-    #     else:
-    #         examples = read_nq_examples(input_file=args.test_file, tfidf_dict=tfidf_dict, is_training=False, args=args)
-    #         with open(example_output_file, 'w') as w:
-    #             json.dump(examples, w)
-    #     features = convert_examples_to_features(examples=examples, tokenizer=tokenizer, is_training=False, args=args)
-    #     torch.save(features, feature_output_file)
+    example_output_file = os.path.join(args.output_dir,
+                                       'dev_data_maxlen{}_tfidf_examples.json'.format(args.max_seq_length))
+    feature_output_file = os.path.join(args.output_dir,
+                                       'dev_data_maxlen{}_roberta_tfidf_features.bin'.format(args.max_seq_length))
+    if args.do_ls:
+        feature_output_file = feature_output_file.replace('_features', '_ls_features')
+    if args.do_combine:
+        example_output_file = example_output_file.replace('_examples', '_combine_examples')
+        feature_output_file = feature_output_file.replace('_features', '_combine_features')
+    if not os.path.exists(feature_output_file):
+        tfidf_dict = json.load(open(args.tfidf_dev_file))
+        if os.path.exists(example_output_file):
+            examples = json.load(open(example_output_file))
+        else:
+            examples = read_nq_examples(input_file=args.dev_file, tfidf_dict=tfidf_dict, is_training=False, args=args)
+            with open(example_output_file, 'w') as w:
+                json.dump(examples, w)
+        features = convert_examples_to_features(examples=examples, tokenizer=tokenizer, is_training=False, args=args)
+        torch.save(features, feature_output_file)
+
+    # test preprocess
+    example_output_file = os.path.join(args.output_dir,
+                                       'test_data_maxlen{}_tfidf_examples.json'.format(args.max_seq_length))
+    feature_output_file = os.path.join(args.output_dir,
+                                       'test_data_maxlen{}_roberta_tfidf_features.bin'.format(args.max_seq_length))
+    if args.do_ls:
+        feature_output_file = feature_output_file.replace('_features', '_ls_features')
+    if args.do_combine:
+        example_output_file = example_output_file.replace('_examples', '_combine_examples')
+        feature_output_file = feature_output_file.replace('_features', '_combine_features')
+    if not os.path.exists(feature_output_file):
+        tfidf_dict = json.load(open(args.tfidf_test_file))
+        if os.path.exists(example_output_file):
+            examples = json.load(open(example_output_file))
+        else:
+            examples = read_nq_examples(input_file=args.test_file, tfidf_dict=tfidf_dict, is_training=False, args=args)
+            with open(example_output_file, 'w') as w:
+                json.dump(examples, w)
+        features = convert_examples_to_features(examples=examples, tokenizer=tokenizer, is_training=False, args=args)
+        torch.save(features, feature_output_file)

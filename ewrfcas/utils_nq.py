@@ -1149,9 +1149,9 @@ def compute_long_predictions(example, n_best_size):
                     continue
                 if long_start_index > long_end_index:
                     continue
-                if long_start_index != 0 or token_map[long_start_index] == -1:
+                if long_start_index != 0 and token_map[long_start_index] == -1:
                     continue
-                if long_end_index != 0 or token_map[long_end_index] == -1:
+                if long_end_index != 0 and token_map[long_end_index] == -1:
                     continue
 
                 # if token_map[long_start_index] == -1:
