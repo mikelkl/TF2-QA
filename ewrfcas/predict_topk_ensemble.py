@@ -26,7 +26,8 @@ RawResult = collections.namedtuple("RawResult",
 def evaluate(model, args, dev_features, device, ei):
     # Eval!
     if os.path.exists(os.path.join(args.output_dir, 'test_RawResults_ensemble{}.pkl'.format(ei))):
-        all_results = pickle.load(open(os.path.join(args.output_dir, 'test_RawResults_ensemble{}.pkl'.format(ei)), 'rb'))
+        all_results = pickle.load(
+            open(os.path.join(args.output_dir, 'test_RawResults_ensemble{}.pkl'.format(ei)), 'rb'))
     else:
         all_results = []
         for batch in tqdm(eval_dataloader, desc="Evaluating Ensemble-{}".format(ei)):
@@ -101,6 +102,7 @@ def load_cached_data(feature_dir, output_features=False, evaluate=False):
 def to_list(tensor):
     return tensor.detach().cpu().tolist()
 
+
 def make_submission(output_prediction_file, output_dir):
     print("***** Making submmision *****")
     test_answers_df = pd.read_json(output_prediction_file)
@@ -170,6 +172,7 @@ if __name__ == '__main__':
     parser.add_argument('--dropout', type=float, default=0.1)
     parser.add_argument('--clip_norm', type=float, default=1.0)
     parser.add_argument('--warmup_rate', type=float, default=0.06)
+    parser.add_argument("--unk_th", default=1.7, type=float, help='unk_thresholds')
     parser.add_argument("--schedule", default='warmup_linear', type=str, help='schedule')
     parser.add_argument("--weight_decay_rate", default=0.01, type=float, help='weight_decay_rate')
     parser.add_argument("--float16", default=True, type=bool)
@@ -198,28 +201,28 @@ if __name__ == '__main__':
     print("device %s n_gpu %d" % (device, n_gpu))
     print("device: {} n_gpu: {} 16-bits training: {}".format(device, n_gpu, args.float16))
 
-    # Loading data
-    print('Loading data...')
-    dev_dataset, dev_features = load_cached_data(feature_dir=args.dev_feat_dir, output_features=True, evaluate=True)
-    eval_dataloader = DataLoader(dev_dataset, shuffle=False, batch_size=args.eval_batch_size)
-
-    bert_config = AlbertConfig.from_json_file(args.bert_config_file)
-
-    for i, init_dir in enumerate(init_dirs):
-        print('Load weights from', init_dir)
-        model = AlBertJointForNQ2(bert_config)
-        model.load_state_dict(torch.load(init_dir, map_location='cpu'), strict=True)
-        if args.float16:
-            model.half()
-        model.to(device)
-        if n_gpu > 1:
-            model = torch.nn.DataParallel(model)
-
-        output_prediction_file = os.path.join(args.output_dir, 'test_predictions{}.json'.format(i))
-        if not os.path.exists(output_prediction_file):
-            evaluate(model, args, dev_features, device, i)
-        else:
-            print(output_prediction_file, 'exists, skip...')
+    # # Loading data
+    # print('Loading data...')
+    # dev_dataset, dev_features = load_cached_data(feature_dir=args.dev_feat_dir, output_features=True, evaluate=True)
+    # eval_dataloader = DataLoader(dev_dataset, shuffle=False, batch_size=args.eval_batch_size)
+    #
+    # bert_config = AlbertConfig.from_json_file(args.bert_config_file)
+    #
+    # for i, init_dir in enumerate(init_dirs):
+    #     print('Load weights from', init_dir)
+    #     model = AlBertJointForNQ2(bert_config)
+    #     model.load_state_dict(torch.load(init_dir, map_location='cpu'), strict=True)
+    #     if args.float16:
+    #         model.half()
+    #     model.to(device)
+    #     if n_gpu > 1:
+    #         model = torch.nn.DataParallel(model)
+    #
+    #     output_prediction_file = os.path.join(args.output_dir, 'test_predictions{}.json'.format(i))
+    #     if not os.path.exists(output_prediction_file):
+    #         evaluate(model, args, dev_features, device, i)
+    #     else:
+    #         print(output_prediction_file, 'exists, skip...')
 
     # get the final score
     from glob import glob
@@ -269,7 +272,8 @@ if __name__ == '__main__':
                     else:
                         ensemble_pred_dict[example_id]['short_answer_dict'][
                             (short_answer['start_token'], short_answer['end_token'])] = pred['short_answers_score']
-                    ensemble_pred_dict[example_id]['answer_type_logits'] += np.array(answer_type_logits).astype(np.float64)
+                    ensemble_pred_dict[example_id]['answer_type_logits'] += np.array(answer_type_logits).astype(
+                        np.float64)
 
     final_preds = []
     for exp_id in ensemble_pred_dict:
@@ -280,6 +284,7 @@ if __name__ == '__main__':
             [(sted, score) for sted, score in ensemble_pred_dict[exp_id]['short_answer_dict'].items()],
             key=lambda x: x[1], reverse=True)[0]
         answer_type_logits = ensemble_pred_dict[exp_id]['answer_type_logits']
+        answer_type_logits[0] *= args.unk_th
         answer_type = int(np.argmax(answer_type_logits))
         if answer_type == AnswerType.YES:
             yes_no_answer = "YES"
@@ -309,10 +314,8 @@ if __name__ == '__main__':
                             'yes_no_answer': yes_no_answer,
                             'answer_type_logits': list(answer_type_logits)})
 
-    output_prediction_file = os.path.join(args.output_dir, 'test_predictions_ensemble.json')
+    output_prediction_file = os.path.join(args.output_dir, 'ensemble_test_predictions.json')
     with open(output_prediction_file, 'w') as f:
         json.dump({'predictions': final_preds}, f)
 
     make_submission(output_prediction_file, args.output_dir)
-
-
