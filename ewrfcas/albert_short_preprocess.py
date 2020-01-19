@@ -126,6 +126,18 @@ def check_is_max_context(doc_spans, cur_span_index, position):
     return cur_span_index == best_span_index
 
 
+def find_top_level(long_answer_cand, sample):
+    if sample['long_answer_candidates'][long_answer_cand]['top_level'] is False:
+        gt_start_token = sample['long_answer_candidates'][long_answer_cand]['start_token']
+        gt_end_token = sample['long_answer_candidates'][long_answer_cand]['end_token']
+        for il, cand in enumerate(sample['long_answer_candidates']):
+            if cand['start_token'] <= gt_start_token and cand['end_token'] >= gt_end_token \
+                    and cand['top_level'] is True:
+                long_answer_cand = il
+                break
+    return long_answer_cand
+
+
 def create_example(line, mode, args, test_cand_dict=None):
     """
     Creates an NQ example from a given line of JSON.
@@ -137,20 +149,11 @@ def create_example(line, mode, args, test_cand_dict=None):
     question_text = sample['question_text']
     ori_doc_tokens = sample['document_text'].split()
 
-    long_answer_cand = -1
     if mode == 'train':  # 训练集直接定位长答案位置生成example
         long_answer_cand = sample['annotations'][0]['long_answer']['candidate_index']
         if long_answer_cand != -1:
             # answer_cand保证top_level是true
-            if sample['long_answer_candidates'][long_answer_cand]['top_level'] is False:
-                gt_start_token = sample['long_answer_candidates'][long_answer_cand]['start_token']
-                gt_end_token = sample['long_answer_candidates'][long_answer_cand]['end_token']
-                for il, cand in enumerate(sample['long_answer_candidates']):
-                    if cand['start_token'] <= gt_start_token and cand['end_token'] >= gt_end_token \
-                            and cand['top_level'] is True:
-                        long_answer_cand = il
-                        break
-            long_answer_cand = [long_answer_cand]
+            long_answer_cand = [find_top_level(long_answer_cand, sample)]
 
     elif mode == 'test':  # 测试集长答案由其他模型定位
         if example_id not in test_cand_dict:
@@ -160,20 +163,13 @@ def create_example(line, mode, args, test_cand_dict=None):
         if long_answer_cand == -1:
             long_answer_cand = []
         else:
-            if sample['long_answer_candidates'][long_answer_cand]['top_level'] is False:
-                gt_start_token = sample['long_answer_candidates'][long_answer_cand]['start_token']
-                gt_end_token = sample['long_answer_candidates'][long_answer_cand]['end_token']
-                for il, cand in enumerate(sample['long_answer_candidates']):
-                    if cand['start_token'] <= gt_start_token and cand['end_token'] >= gt_end_token \
-                            and cand['top_level'] is True:
-                        long_answer_cand = il
-                        break
-            long_answer_cand = [long_answer_cand]
+            long_answer_cand = [find_top_level(long_answer_cand, sample)]
     elif mode == 'dev':  # 验证集吧所有annotations都作为长答案
         long_answer_cand = []
         for ans in sample['annotations']:
             if ans['long_answer']['candidate_index'] != -1:
-                long_answer_cand.append(ans['long_answer']['candidate_index'])
+                long_answer_cand.append(find_top_level(ans['long_answer']['candidate_index'], sample))
+        long_answer_cand = list(set(long_answer_cand))
     else:
         raise NotImplementedError
 
@@ -536,20 +532,20 @@ if __name__ == '__main__':
         vocab_file='albert_xxlarge/30k-clean.vocab', do_lower_case=True,
         spm_model_file='albert_xxlarge/30k-clean.model')
 
-    # train preprocess
-    example_output_file = os.path.join(args.output_dir,
-                                       'train_data_maxlen{}_short_examples.json'.format(args.max_seq_length))
-    feature_output_file = os.path.join(args.output_dir,
-                                       'train_data_maxlen{}_albert_short_features.bin'.format(args.max_seq_length))
-    if not os.path.exists(feature_output_file):
-        if os.path.exists(example_output_file):
-            examples = json.load(open(example_output_file))
-        else:
-            examples = read_nq_examples(input_file=args.train_file, mode='train', args=args)
-            with open(example_output_file, 'w') as w:
-                json.dump(examples, w)
-        features = convert_examples_to_features(examples=examples, tokenizer=tokenizer, is_training=True, args=args)
-        torch.save(features, feature_output_file)
+    # # train preprocess
+    # example_output_file = os.path.join(args.output_dir,
+    #                                    'train_data_maxlen{}_short_examples.json'.format(args.max_seq_length))
+    # feature_output_file = os.path.join(args.output_dir,
+    #                                    'train_data_maxlen{}_albert_short_features.bin'.format(args.max_seq_length))
+    # if not os.path.exists(feature_output_file):
+    #     if os.path.exists(example_output_file):
+    #         examples = json.load(open(example_output_file))
+    #     else:
+    #         examples = read_nq_examples(input_file=args.train_file, mode='train', args=args)
+    #         with open(example_output_file, 'w') as w:
+    #             json.dump(examples, w)
+    #     features = convert_examples_to_features(examples=examples, tokenizer=tokenizer, is_training=True, args=args)
+    #     torch.save(features, feature_output_file)
 
     # dev preprocess
     example_output_file = os.path.join(args.output_dir,
