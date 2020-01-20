@@ -2,6 +2,8 @@
 # @Author  : mikelkl
 from __future__ import absolute_import, division, print_function
 from tqdm import tqdm
+from multiprocessing import Pool
+from functools import partial
 
 import logging
 import collections
@@ -13,6 +15,8 @@ import os
 import transformers.tokenization_roberta as tokenization
 import torch
 
+logging.basicConfig(format='%(asctime)s - %(levelname)s - %(name)s -   %(message)s',
+                        datefmt='%m/%d/%Y %H:%M:%S')
 logger = logging.getLogger(__name__)
 
 AnswerType = {
@@ -391,37 +395,69 @@ def read_nq_examples(input_file, tfidf_dict, is_training, args):
             all_examples.extend(new_examples)
     return all_examples
 
+def convert_examples_to_features_(example, tokenizer, is_training, args):
+    """
+    Converts a list of NqExamples into InputFeatures.
+    Args:
+        examples: list
+        tokenizer:
+        is_training: bool
+        args:
+
+    Returns:
+        features_: list
+        postive_incremental: int
+        negative_incremental: int
+    """
+    features_ = []
+    example_index = example['example_id']
+    paragraph_id = example['paragraph_id']
+    if args.do_ls:
+        features = convert_single_ls_example(example, tokenizer, is_training, args)
+    else:
+        raise ValueError("Must do_ls")
+    negative_incremental, postive_incremental = 0, 0
+    for feature in features:
+        feature.example_index = example_index
+        feature.unique_id = paragraph_id + '_' + str(feature.doc_span_index)
+        features_.append(feature)
+        if is_training:
+            if feature.answer_type == AnswerType['UNKNOWN']:
+                negative_incremental += 1
+            else:
+                postive_incremental += 1
+    return features_, postive_incremental, negative_incremental
 
 def convert_examples_to_features(examples, tokenizer, is_training, args):
+    """
+    Parallelly Converts a list of NqExamples into InputFeatures.
+    Args:
+        examples: list
+        tokenizer:
+        is_training: bool
+        args:
+
+    Returns:
+        all_features: list
+    """
     """Converts a list of NqExamples into InputFeatures."""
     all_features = []
     positive_features = 0
     negative_features = 0
     logger.info("Converting a list of NqExamples into InputFeatures ...")
-    for index, example in enumerate(tqdm(examples)):
-        example_index = example['example_id']
-        paragraph_id = example['paragraph_id']
-        if args.do_ls:
-            # if example_index == -1997081199558095221:
-            #     features = convert_single_ls_example(example, tokenizer, is_training, args)
-            # else:
-            #     continue
-            features = convert_single_ls_example(example, tokenizer, is_training, args)
-        else:
-            # features = convert_single_example(example, tokenizer, is_training, args)
-            raise ValueError("Must do_ls")
-        for feature in features:
-            feature.example_index = example_index
-            feature.unique_id = paragraph_id + '_' + str(feature.doc_span_index)
-            all_features.append(feature)
-            if is_training:
-                if feature.answer_type == AnswerType['UNKNOWN']:
-                    negative_features += 1
-                else:
-                    positive_features += 1
+    index = 0
+    with Pool(args.num_workers) as pool:
+        with tqdm(total=len(examples), initial=0) as pbar:
+            # For very long iterables using a large value for chunksize can make the job complete much faster than using the default value of 1.
+            for features_, postive_incremental, negative_incremental in pool.imap(partial(convert_examples_to_features_, tokenizer=tokenizer, is_training=is_training, args=args), examples, chunksize=1000):
+                all_features.extend(features_)
+                positive_features += postive_incremental
+                negative_features += negative_incremental
+                pbar.update()
 
-        if is_training and index % 5000 == 0:
-            print('Positive features:', positive_features, 'Negative features:', negative_features)
+                if is_training and (index) % 5000 == 0:
+                    print('Positive features:', positive_features, 'Negative features:', negative_features)
+                index += 1
 
     print('Positive features:', positive_features, 'Negative features:', negative_features)
 
@@ -602,6 +638,8 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument("--train_file", default='data/simplified-nq-train.jsonl', type=str,
                         help="NQ json for training. E.g., simplified-nq-train.jsonl")
+    # parser.add_argument("--train_file", default='data/tiny-train.jsonl', type=str,
+    #                     help="NQ json for training. E.g., simplified-nq-train.jsonl")
     parser.add_argument("--dev_file", default='data/simplified-nq-dev.jsonl', type=str,
                         help="NQ json for predictions. E.g., simplified-nq-test.jsonl")
     parser.add_argument("--test_file", default='data/simplified-nq-test.jsonl', type=str,
@@ -620,7 +658,7 @@ if __name__ == '__main__':
                         help="Maximum context position for which to generate special tokens.")
     parser.add_argument("--example_neg_filter", type=float, default=0.2,
                         help="If positive, probability of including answers of type `UNKNOWN`.")
-    parser.add_argument("--include_unknowns", type=float, default=0.025,
+    parser.add_argument("--include_unknowns", type=float, default=0.09,
                         help="If positive, probability of including answers of type `UNKNOWN`.")
     parser.add_argument("--skip_nested_contexts", type=bool, default=True,
                         help="Completely ignore context that are not top level nodes in the page.")
@@ -631,6 +669,8 @@ if __name__ == '__main__':
     parser.add_argument("--tfidf_train_file", type=str, default='dataset/train_cand_selected_600.json')
     parser.add_argument("--tfidf_dev_file", type=str, default='dataset/dev_cand_selected_600.json')
     parser.add_argument("--tfidf_test_file", type=str, default='dataset/test_cand_selected_600.json')
+    parser.add_argument("--num_workers", default=8, type=int,
+                        help="Number of processes for parallel preprocessing")
 
     args = parser.parse_args()
 
@@ -644,6 +684,8 @@ if __name__ == '__main__':
     # train preprocess
     example_output_file = os.path.join(args.output_dir,
                                        'train_data_maxlen{}_tfidf_examples.json'.format(args.max_seq_length))
+    # example_output_file = os.path.join(args.output_dir,
+    #                                    'tiny_train_data_maxlen{}_tfidf_examples.json'.format(args.max_seq_length))
     feature_output_file = os.path.join(args.output_dir,
                                        'train_data_maxlen{}_roberta_tfidf_features.bin'.format(args.max_seq_length))
     if args.do_ls:
@@ -654,6 +696,7 @@ if __name__ == '__main__':
     if not os.path.exists(feature_output_file):
         tfidf_dict = json.load(open(args.tfidf_train_file))
         if os.path.exists(example_output_file):
+            print("Reading: %s" % (example_output_file))
             examples = json.load(open(example_output_file))
         else:
             examples = read_nq_examples(input_file=args.train_file, tfidf_dict=tfidf_dict, is_training=True, args=args)
