@@ -68,7 +68,7 @@ def evaluate(model, args, dev_features, device, global_steps):
 
     ground_truth_dict = load_annotations_from_dev(args.predict_file)
     nq_pred_dict = compute_short_pred(dev_features, all_results,
-                                     args.n_best_size, args.max_answer_length)
+                                      args.n_best_size, args.max_answer_length)
 
     output_prediction_file = os.path.join(args.output_dir, 'predictions' + str(global_steps) + '.json')
     with open(output_prediction_file, 'w') as f:
@@ -118,7 +118,7 @@ if __name__ == '__main__':
     parser.add_argument("--n_best_size", default=20, type=int)
     parser.add_argument("--max_answer_length", default=30, type=int)
     parser.add_argument("--eval_steps", default=1375, type=int)
-    parser.add_argument('--seed', type=int, default=678)
+    parser.add_argument('--seed', type=int, default=887)
     parser.add_argument('--lr', type=float, default=3e-5)
     parser.add_argument('--dropout', type=float, default=0.1)
     parser.add_argument('--clip_norm', type=float, default=1.0)
@@ -129,12 +129,12 @@ if __name__ == '__main__':
 
     parser.add_argument("--bert_config_file", default='albert_xxlarge', type=str)
     parser.add_argument("--init_restore_dir", default='albert_xxlarge', type=str)
-    parser.add_argument("--output_dir", default='check_points/albert-xxlarge-short-V01', type=str)
+    parser.add_argument("--output_dir", default='check_points/albert-xxlarge-short-V03', type=str)
     parser.add_argument("--log_file", default='log.txt', type=str)
     parser.add_argument("--setting_file", default='setting.txt', type=str)
 
     parser.add_argument("--predict_file", default='data/simplified-nq-dev.jsonl', type=str)
-    parser.add_argument("--train_feat_dir", default='dataset/train_data_maxlen512_albert_short_features_refined.bin',
+    parser.add_argument("--train_feat_dir", default='dataset/train_data_maxlen512_albert_short_features.bin',
                         type=str)
     parser.add_argument("--dev_feat_dir", default='dataset/dev_data_maxlen512_albert_short_features.bin',
                         type=str)

@@ -156,10 +156,10 @@ def create_example(line, mode, args, test_cand_dict=None):
             long_answer_cand = [find_top_level(long_answer_cand, sample)]
 
     elif mode == 'test':  # 测试集长答案由其他模型定位
-        if example_id not in test_cand_dict:
+        if int(example_id) not in test_cand_dict:
             long_answer_cand = test_cand_dict[str(example_id)]
         else:
-            long_answer_cand = test_cand_dict[example_id]
+            long_answer_cand = test_cand_dict[int(example_id)]
         if long_answer_cand == -1:
             long_answer_cand = []
         else:

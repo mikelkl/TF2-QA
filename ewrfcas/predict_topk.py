@@ -65,9 +65,6 @@ def make_submission(output_prediction_file, output_dir):
         if entry['answer_type'] == 0:
             return ""
 
-        # if entry["short_answers_score"] < 1.5:
-        #     return ""
-
         if entry["yes_no_answer"] != "NONE":
             return entry["yes_no_answer"]
 
@@ -80,9 +77,6 @@ def make_submission(output_prediction_file, output_dir):
     def create_long_answer(entry):
         if entry['answer_type'] == 0:
             return ''
-
-        # if entry["long_answer_score"] < 1.5:
-        #     return ""
 
         answer = []
         if entry["long_answer"]["start_token"] > -1:
@@ -116,7 +110,7 @@ def make_submission(output_prediction_file, output_dir):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument("--gpu_ids", default="0,1,2,3,4,5,6,7", type=str)
+    parser.add_argument("--gpu_ids", default="7", type=str)
     parser.add_argument("--eval_batch_size", default=128, type=int)
     parser.add_argument("--n_best_size", default=20, type=int)
     parser.add_argument("--max_answer_length", default=30, type=int)
@@ -124,7 +118,7 @@ if __name__ == '__main__':
     parser.add_argument("--bert_config_file", default=None, type=str)
     parser.add_argument("--init_restore_dir", default=None, type=str)
     parser.add_argument("--predict_file", default='data/simplified-nq-test.jsonl', type=str)
-    parser.add_argument("--output_dir", default='check_points/albert-xxlarge-tfidf-600-top8-V5',
+    parser.add_argument("--output_dir", default='check_points/albert-xxlarge-tfidf-600-top8-V0',
                         type=str)
     parser.add_argument("--predict_feat", default='dataset/test_data_maxlen512_albert_tfidf_ls_combine_features.bin',
                         type=str)
@@ -187,7 +181,7 @@ if __name__ == '__main__':
                                long_cls_logits=outputs['long_cls_logits'][i].cpu().numpy(),
                                short_cls_logits=outputs['short_cls_logits'][i].cpu().numpy())
             all_results.append(result)
-
+    #
     pickle.dump(all_results, open(os.path.join(args.output_dir, 'RawResults_test.pkl'), 'wb'))
     # all_results = pickle.load(open(os.path.join(args.output_dir, 'RawResults_test.pkl'), 'rb'))
 
@@ -205,4 +199,4 @@ if __name__ == '__main__':
     with open(output_prediction_file, 'w') as f:
         json.dump({'predictions': list(nq_pred_dict.values())}, f)
 
-    # make_submission(output_prediction_file, args.output_dir)
+    make_submission(output_prediction_file, args.output_dir)

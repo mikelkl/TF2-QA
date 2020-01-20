@@ -11,7 +11,7 @@ import numpy as np
 import json
 import collections
 import pickle
-from nq_eval import get_metrics_long,get_metrics_as_dict
+from nq_eval import get_metrics_as_dict
 from utils_nq import load_all_annotations_from_dev, compute_long_pred
 from roberta_long_preprocess import InputLongFeatures
 from pytorch_optimization import get_optimization, warmup_linear
@@ -193,7 +193,7 @@ if __name__ == '__main__':
                                  weight_decay_rate=args.weight_decay_rate,
                                  opt_pooler=False)  # 只做长答案不需要做answer_type分类
 
-    results = evaluate(model, args, dev_features, device, 0)
+    # results = evaluate(model, args, dev_features, device, 0)
 
     # Train!
     print('***** Training *****')
