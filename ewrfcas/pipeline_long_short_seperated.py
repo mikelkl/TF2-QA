@@ -6,8 +6,8 @@ import os
 from utils_nq import read_candidates_from_one_split
 
 gold_file = 'data/simplified-nq-dev.jsonl'
-model_dir = "check_points/albert-xxlarge-tfidf-600-top8-V0/"
-prediction_file = "predictions99998.json"
+model_dir = "check_points/roberta-large-long-V00/"
+prediction_file = "predictions11700.json"
 
 long_prediction_file = "long_" + prediction_file
 long_prediction_file = os.path.join(model_dir, long_prediction_file)

@@ -132,11 +132,11 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument("--gpu_ids", default="2,3,4,5,6,7", type=str)
     parser.add_argument("--train_epochs", default=2, type=int)
-    parser.add_argument("--train_batch_size", default=48, type=int)
+    parser.add_argument("--train_batch_size", default=32, type=int)
     parser.add_argument("--eval_batch_size", default=64, type=int)
     parser.add_argument("--n_best_size", default=20, type=int)
     parser.add_argument("--max_answer_length", default=30, type=int)
-    parser.add_argument("--eval_steps", default=2925, type=int)
+    parser.add_argument("--eval_steps", default=0.25, type=int)
     parser.add_argument('--seed', type=int, default=556)
     parser.add_argument('--lr', type=float, default=3e-5)
     parser.add_argument('--dropout', type=float, default=0.1)
@@ -191,12 +191,15 @@ if __name__ == '__main__':
         dev_steps_per_epoch += 1
     total_steps = steps_per_epoch * args.train_epochs
 
+    if args.eval_steps < 1:
+        args.eval_steps = int(args.eval_steps * steps_per_epoch)
     print('steps per epoch:', steps_per_epoch)
     print('total steps:', total_steps)
+    print('eval steps:', args.eval_steps)
     print('warmup steps:', int(args.warmup_rate * total_steps))
 
     bert_config = RobertaConfig.from_json_file(args.bert_config_file)
-    model = RobertaJointForNQ2(bert_config, long_n_top=5, short_n_top=5)
+    model = RobertaJointForNQ2(RobertaModel(bert_config), bert_config, long_n_top=5, short_n_top=5)
     utils.torch_show_all_params(model)
     utils.torch_init_model(model, args.init_restore_dir)
     if args.float16:
@@ -215,6 +218,7 @@ if __name__ == '__main__':
                                  max_grad_norm=args.clip_norm,
                                  weight_decay_rate=args.weight_decay_rate,
                                  opt_pooler=True)
+    # results = evaluate(model, args, dev_features, device, 0)
 
     # Train!
     print('***** Training *****')

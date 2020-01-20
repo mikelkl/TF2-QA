@@ -402,10 +402,14 @@ def convert_examples_to_features(examples, tokenizer, is_training, args):
         example_index = example['example_id']
         paragraph_id = example['paragraph_id']
         if args.do_ls:
+            # if example_index == -1997081199558095221:
+            #     features = convert_single_ls_example(example, tokenizer, is_training, args)
+            # else:
+            #     continue
             features = convert_single_ls_example(example, tokenizer, is_training, args)
         else:
-            features = convert_single_example(example, tokenizer, is_training, args)
-
+            # features = convert_single_example(example, tokenizer, is_training, args)
+            raise ValueError("Must do_ls")
         for feature in features:
             feature.example_index = example_index
             feature.unique_id = paragraph_id + '_' + str(feature.doc_span_index)
@@ -424,7 +428,7 @@ def convert_examples_to_features(examples, tokenizer, is_training, args):
     return all_features
 
 
-def convert_single_example(example, tokenizer, is_training, args):
+def convert_single_ls_example(example, tokenizer, is_training, args):
     """Converts a single NqExample into a list of InputFeatures."""
     tok_to_orig_index = []
     orig_to_tok_index = []
@@ -435,6 +439,7 @@ def convert_single_example(example, tokenizer, is_training, args):
         sub_tokens = roberta_tokenize(tokenizer, token)
         tok_to_orig_index.extend([i] * len(sub_tokens))
         all_doc_tokens.extend(sub_tokens)
+    orig_to_tok_index.append(len(all_doc_tokens))
 
     # 特别注意！由于在paragraph_tokens中我们的token已经映射过一次了
     # 这里wordpiece等于又映射了一遍，所以这里的操作是二次映射
@@ -449,27 +454,18 @@ def convert_single_example(example, tokenizer, is_training, args):
         query_tokens = query_tokens[-args.max_query_length:]
 
     # ANSWER 预处理的时候先长短分开
-    tok_start_position = -1
-    tok_end_position = -1
+    tok_long_start_position = -1
+    tok_long_end_position = -1
+    tok_short_start_position = -1
+    tok_short_end_position = -1
     # 这里终点是必然在para_tokens内的
     if is_training:
-        # 现阶段，有短答案预测短答案，否则预测长答案
         if example['answer_type'] != AnswerType['UNKNOWN']:
             tok_long_start_position = orig_to_tok_index[example['long_start']]
-            if example['long_end'] == len(orig_to_tok_index):
-                tok_long_end_position = orig_to_tok_index[-1]
-            else:
-                tok_long_end_position = orig_to_tok_index[example['long_end']] - 1
-            tok_start_position = tok_long_start_position
-            tok_end_position = tok_long_end_position
+            tok_long_end_position = orig_to_tok_index[example['long_end']] - 1
         if example['answer_type'] == AnswerType['SHORT']:
             tok_short_start_position = orig_to_tok_index[example['short_start']]
-            if example['short_end'] == len(orig_to_tok_index):
-                tok_short_end_position = orig_to_tok_index[-1]
-            else:
-                tok_short_end_position = orig_to_tok_index[example['short_end']] - 1
-            tok_start_position = tok_short_start_position
-            tok_end_position = tok_short_end_position
+            tok_short_end_position = orig_to_tok_index[example['short_end']] - 1
 
     # Get max tokens number for original doc,
     # should minus query tokens number and 3 special tokens
@@ -513,167 +509,6 @@ def convert_single_example(example, tokenizer, is_training, args):
             token_is_max_context[len(tokens)] = is_max_context
             tokens.append(all_doc_tokens[split_token_index])
             segment_ids.append(0)
-        tokens.append("<sep>")
-        segment_ids.append(0)
-        assert len(tokens) == len(segment_ids)
-
-        input_ids = roberta_convert_tokens_to_ids(tokenizer, tokens)
-
-        # The mask has 1 for real tokens and 0 for padding tokens. Only real
-        # tokens are attended to.
-        input_mask = [1] * len(input_ids)
-
-        # Zero-pad up to the sequence length.
-        # roberta的mask为1
-        one_padding = [1] * (args.max_seq_length - len(input_ids))
-        zero_padding = [0] * (args.max_seq_length - len(input_ids))
-        input_ids.extend(one_padding)
-        input_mask.extend(zero_padding)
-        segment_ids.extend(zero_padding)
-
-        assert len(input_ids) == args.max_seq_length
-        assert len(input_mask) == args.max_seq_length
-        assert len(segment_ids) == args.max_seq_length
-
-        start_position = None
-        end_position = None
-        answer_type = None
-        answer_text = ""
-        if is_training:
-            doc_start = doc_span.start
-            doc_end = doc_span.start + doc_span.length - 1
-            # For training, if our document chunk does not contain an annotation
-            # we throw it out, since there is nothing to predict.
-            contains_an_annotation = (tok_start_position >= doc_start and tok_end_position <= doc_end)
-            # 负样本需要经过采样，且目标为[CLS]
-            if (not contains_an_annotation) or example['answer_type'] == AnswerType['UNKNOWN']:
-                if args.include_unknowns < 0 or random.random() > args.include_unknowns:
-                    continue
-                start_position = 0
-                end_position = 0
-                answer_type = AnswerType['UNKNOWN']
-            else:
-                doc_offset = len(query_tokens) + 2
-                start_position = tok_start_position - doc_start + doc_offset
-                end_position = tok_end_position - doc_start + doc_offset
-                answer_type = example['answer_type']
-
-                # 如果是短答案，对一下答案是否正确
-                if example['answer_type'] == AnswerType['SHORT']:
-                    answer_text = " ".join(tokens[start_position:(end_position + 1)])
-                    answer_text = answer_text.replace(' ', '').replace(u"Ġ", ' ').strip()
-                    gt_answer = example['short_answer_text']
-                    answer_text_chars = [c for c in answer_text if c not in " \t\r\n" and ord(c) != 0x202F]
-                    gt_answer_chars = [c for c in gt_answer if c not in " \t\r\n" and ord(c) != 0x202F]
-                    if "".join(answer_text_chars) != "".join(gt_answer_chars):
-                        print(answer_text, 'V.S.', gt_answer)
-
-        feature = InputFeatures(
-            unique_id=None,
-            example_index=None,
-            doc_span_index=doc_span_index,
-            tokens=tokens,
-            token_to_orig_map=token_to_orig_map,
-            token_is_max_context=token_is_max_context,
-            input_ids=input_ids,
-            input_mask=input_mask,
-            segment_ids=segment_ids,
-            start_position=start_position,
-            end_position=end_position,
-            answer_text=answer_text,
-            answer_type=answer_type)
-
-        features.append(feature)
-
-    return features
-
-
-def convert_single_ls_example(example, tokenizer, is_training, args):
-    """Converts a single NqExample into a list of InputFeatures."""
-    tok_to_orig_index = []
-    orig_to_tok_index = []
-    all_doc_tokens = []  # all subtokens of original doc after tokenizing
-    features = []
-    for (i, token) in enumerate(example['paragraph_tokens']):
-        orig_to_tok_index.append(len(all_doc_tokens))
-        sub_tokens = roberta_tokenize(tokenizer, token)
-        tok_to_orig_index.extend([i] * len(sub_tokens))
-        all_doc_tokens.extend(sub_tokens)
-
-    # 特别注意！由于在paragraph_tokens中我们的token已经映射过一次了
-    # 这里wordpiece等于又映射了一遍，所以这里的操作是二次映射
-    if example['position_map']:
-        tok_to_orig_index = [example['position_map'][index] for index in tok_to_orig_index]
-
-    # QUERY
-    query_tokens = []
-    query_tokens.append("[Q]")
-    query_tokens.extend(roberta_tokenize(tokenizer, example['question_text']))
-    if len(query_tokens) > args.max_query_length:
-        query_tokens = query_tokens[-args.max_query_length:]
-
-    # ANSWER 预处理的时候先长短分开
-    tok_long_start_position = -1
-    tok_long_end_position = -1
-    tok_short_start_position = -1
-    tok_short_end_position = -1
-    # 这里终点是必然在para_tokens内的
-    if is_training:
-        if example['answer_type'] != AnswerType['UNKNOWN']:
-            tok_long_start_position = orig_to_tok_index[example['long_start']]
-            if example['long_end'] == len(orig_to_tok_index):
-                tok_long_end_position = orig_to_tok_index[-1]
-            else:
-                tok_long_end_position = orig_to_tok_index[example['long_end']] - 1
-        if example['answer_type'] == AnswerType['SHORT']:
-            tok_short_start_position = orig_to_tok_index[example['short_start']]
-            if example['short_end'] == len(orig_to_tok_index):
-                tok_short_end_position = orig_to_tok_index[-1]
-            else:
-                tok_short_end_position = orig_to_tok_index[example['short_end']] - 1
-
-    # Get max tokens number for original doc,
-    # should minus query tokens number and 3 special tokens
-    # The -3 accounts for [CLS], [SEP] and [SEP]
-    max_tokens_for_doc = args.max_seq_length - len(query_tokens) - 3
-
-    # We can have documents that are longer than the maximum sequence length.
-    # To deal with this we do a sliding window approach, where we take chunks
-    # of up to our max length with a stride of `doc_stride`.
-    _DocSpan = collections.namedtuple("DocSpan", ["start", "length"])
-    doc_spans = []
-    start_offset = 0
-    while start_offset < len(all_doc_tokens):
-        length = len(all_doc_tokens) - start_offset  # compute number of tokens remaining unsliding
-        length = min(length, max_tokens_for_doc)  # determine current sliding window size
-        doc_spans.append(_DocSpan(start=start_offset, length=length))
-
-        # Consider case for reaching end of original doc
-        if start_offset + length == len(all_doc_tokens):
-            break
-        start_offset += min(length, args.doc_stride)
-
-    # Convert window + query + special tokens to feature
-    for (doc_span_index, doc_span) in enumerate(doc_spans):
-        tokens = []
-        token_to_orig_map = {}
-        token_is_max_context = {}
-        segment_ids = []
-        tokens.append("<cls>")
-        segment_ids.append(0)  # roberta的segment_id全0
-        tokens.extend(query_tokens)
-        segment_ids.extend([0] * len(query_tokens))
-        tokens.append("<sep>")
-        segment_ids.append(0)
-
-        for i in range(doc_span.length):
-            split_token_index = doc_span.start + i
-            token_to_orig_map[len(tokens)] = tok_to_orig_index[split_token_index]
-
-            is_max_context = check_is_max_context(doc_spans, doc_span_index, split_token_index)
-            token_is_max_context[len(tokens)] = is_max_context
-            tokens.append(all_doc_tokens[split_token_index])
-            segment_ids.append(1)
         tokens.append("<sep>")
         segment_ids.append(0)
         assert len(tokens) == len(segment_ids)
@@ -868,3 +703,19 @@ if __name__ == '__main__':
                 json.dump(examples, w)
         features = convert_examples_to_features(examples=examples, tokenizer=tokenizer, is_training=False, args=args)
         torch.save(features, feature_output_file)
+
+    # # Reset segment_id as 0 for roberta
+    # import torch
+    # paths = ["/users/liukanglong/projects/TF2-QA/ewrfcas/dataset/train_data_maxlen512_roberta_tfidf_ls_features.bin",
+    #          "/users/liukanglong/projects/TF2-QA/ewrfcas/dataset/dev_data_maxlen512_roberta_tfidf_ls_features.bin",
+    #          "/users/liukanglong/projects/TF2-QA/ewrfcas/dataset/test_data_maxlen512_roberta_tfidf_ls_features.bin"]
+    # for path in paths:
+    #     print("Processing:", path)
+    #     feat = torch.load(path)
+    #     for i, _ in tqdm(enumerate(feat)):
+    #         feat[i].segment_ids=[0]*512
+    #     torch.save(feat, path)
+
+    # import torch
+    # path = "/users/liukanglong/projects/TF2-QA/ewrfcas/dataset/dev_data_maxlen512_roberta_tfidf_ls_features.bin"
+    # feat = torch.load(path)

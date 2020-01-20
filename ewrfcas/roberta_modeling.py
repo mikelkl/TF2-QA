@@ -74,7 +74,7 @@ class RobertaJointForLong(nn.Module):
 
 class RobertaJointForNQ2(nn.Module):
     def __init__(self, bert, config, long_n_top=5, short_n_top=5):
-        super(RobertaJointForNQ2, self).__init__(config)
+        super(RobertaJointForNQ2, self).__init__()
         self.num_labels = config.num_labels
         self.long_n_top = long_n_top
         self.short_n_top = short_n_top
@@ -108,10 +108,7 @@ class RobertaJointForNQ2(nn.Module):
                 short_start_positions=None, short_end_positions=None,
                 answer_types=None):
 
-        outputs = self.bert(input_ids,
-                            attention_mask=attention_mask,
-                            token_type_ids=token_type_ids,
-                            output_all_encoded_layers=False)
+        outputs = self.bert(input_ids, attention_mask=attention_mask, token_type_ids=token_type_ids)
 
         sequence_output = outputs[0]
         pooled_output = outputs[1]

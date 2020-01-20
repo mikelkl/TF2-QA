@@ -12,7 +12,7 @@ import json
 import collections
 import pickle
 from nq_eval import get_metrics_as_dict
-from utils_nq import load_all_annotations_from_dev, compute_long_predictions
+from utils_nq import load_all_annotations_from_dev, compute_long_pred
 from roberta_long_preprocess import InputLongFeatures
 from pytorch_optimization import get_optimization, warmup_linear
 
