@@ -10,8 +10,8 @@ import numpy as np
 import json
 import collections
 import pickle
-from nq_eval import get_metrics_short
-from utils_nq import load_annotations_from_dev, compute_short_pred
+from nq_eval import get_metrics_as_dict
+from utils_nq import compute_short_pred, convert_short_pred
 from albert_short_preprocess import InputShortFeatures
 from pytorch_optimization import get_optimization, warmup_linear
 
@@ -66,15 +66,15 @@ def evaluate(model, args, dev_features, device, global_steps):
     pickle.dump(all_results, open(os.path.join(args.output_dir, 'RawResults.pkl'), 'wb'))
     # all_results = pickle.load(open(os.path.join(args.output_dir, 'RawResults.pkl'), 'rb'))
 
-    ground_truth_dict = load_annotations_from_dev(args.predict_file)
     nq_pred_dict = compute_short_pred(dev_features, all_results,
                                       args.n_best_size, args.max_answer_length)
+    nq_pred_dict = convert_short_pred(nq_pred_dict)
 
     output_prediction_file = os.path.join(args.output_dir, 'predictions' + str(global_steps) + '.json')
     with open(output_prediction_file, 'w') as f:
         json.dump({'predictions': list(nq_pred_dict.values())}, f)
 
-    results = get_metrics_short(ground_truth_dict, nq_pred_dict)
+    results = get_metrics_as_dict(args.predict_file, output_prediction_file)
     print('Steps:{}'.format(global_steps))
     print(json.dumps(results, indent=2))
 
@@ -112,13 +112,13 @@ def to_list(tensor):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument("--gpu_ids", default="0,1,2,3,4,5,6,7", type=str)
-    parser.add_argument("--train_epochs", default=2, type=int)
+    parser.add_argument("--train_epochs", default=3, type=int)
     parser.add_argument("--train_batch_size", default=32, type=int)
     parser.add_argument("--eval_batch_size", default=64, type=int)
     parser.add_argument("--n_best_size", default=20, type=int)
     parser.add_argument("--max_answer_length", default=30, type=int)
-    parser.add_argument("--eval_steps", default=1375, type=int)
-    parser.add_argument('--seed', type=int, default=887)
+    parser.add_argument("--eval_steps", default=1995, type=int)
+    parser.add_argument('--seed', type=int, default=1234)
     parser.add_argument('--lr', type=float, default=3e-5)
     parser.add_argument('--dropout', type=float, default=0.1)
     parser.add_argument('--clip_norm', type=float, default=1.0)
@@ -129,12 +129,12 @@ if __name__ == '__main__':
 
     parser.add_argument("--bert_config_file", default='albert_xxlarge', type=str)
     parser.add_argument("--init_restore_dir", default='albert_xxlarge', type=str)
-    parser.add_argument("--output_dir", default='check_points/albert-xxlarge-short-V03', type=str)
+    parser.add_argument("--output_dir", default='check_points/albert-xxlarge-short-V11', type=str)
     parser.add_argument("--log_file", default='log.txt', type=str)
     parser.add_argument("--setting_file", default='setting.txt', type=str)
 
-    parser.add_argument("--predict_file", default='data/simplified-nq-dev.jsonl', type=str)
-    parser.add_argument("--train_feat_dir", default='dataset/train_data_maxlen512_albert_short_features.bin',
+    parser.add_argument("--predict_file", default='data/simplified-nq-dev-short.jsonl', type=str)
+    parser.add_argument("--train_feat_dir", default='dataset/train_data_maxlen512_albert_short_features_same.bin',
                         type=str)
     parser.add_argument("--dev_feat_dir", default='dataset/dev_data_maxlen512_albert_short_features.bin',
                         type=str)
@@ -199,7 +199,7 @@ if __name__ == '__main__':
                                  weight_decay_rate=args.weight_decay_rate,
                                  opt_pooler=True)
 
-    # results = evaluate(model, args, dev_features, device, 0)
+    results = evaluate(model, args, dev_features, device, 0)
 
     # Train!
     print('***** Training *****')
@@ -250,8 +250,8 @@ if __name__ == '__main__':
                         aw.write("--------------steps:{}--------------\n".format(global_steps))
                         aw.write(str(json.dumps(results, indent=2)) + '\n')
 
-                    if results['f1'] >= best_f1:
-                        best_f1 = results['f1']
+                    if results['short-f1'] >= best_f1:
+                        best_f1 = results['short-f1']
                         print('Best f1:', best_f1)
                         model_to_save = model.module if hasattr(model, 'module') else model
                         torch.save(model_to_save.state_dict(),

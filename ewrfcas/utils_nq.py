@@ -1075,7 +1075,7 @@ def compute_topk_predictions(example, long_topk=5, short_topk=5, max_answer_leng
     return summary
 
 
-def compute_ls_topk_predictions(example, th_long, th_short,
+def compute_ls_topk_predictions(example, th_long, th_short, remain_topk=1,
                                 long_topk=5, short_topk=5, max_answer_length=30):
     predictions = []
     for feature, result in zip(example['features'], example['results']):
@@ -1141,64 +1141,97 @@ def compute_ls_topk_predictions(example, th_long, th_short,
                 predictions.append((long_score, short_score, summary, rel_long_start_index, rel_long_end_index,
                                     rel_short_start_index, rel_short_end_index))
 
-    short_span = Span(-1, -1)
-    long_span = Span(-1, -1)
-    summary = ScoreSummary()
     if predictions:
+        short_spans = []
+        long_spans = []
+        short_scores = []
+        long_scores = []
+
         # 暂时仅靠long_score排序
-        long_score, short_score, summary, long_start_span, long_end_span, short_start_span, short_end_span = \
-            sorted(predictions, key=lambda x: x[0], reverse=True)[0]
-        long_span = Span(long_start_span, long_end_span)
-        best_long_span = Span(long_start_span, long_end_span)
-        short_span = Span(short_start_span, short_end_span)
-        # 对于长答案，我们从candidates里选择最接近的一组cand
-        min_dis = 99999
-        for c in example['candidates']:
-            # if c['top_level'] is False:
-            #     continue
+        topk_predictions = sorted(predictions, key=lambda x: x[0], reverse=True)[:remain_topk]
+        # answer_type取top1的
+        _, _, summary, _, _, _, _ = topk_predictions[0]
+        answer_type_logits = summary.answer_type_logits
+        answer_type_logits[0] *= th_long
+        answer_type_logits[3] /= th_short
+        answer_type = int(np.argmax(answer_type_logits))
+        for prediction_ in topk_predictions:
+            long_score, short_score, summary, long_start_span, \
+            long_end_span, short_start_span, short_end_span = prediction_
+            long_span = Span(long_start_span, long_end_span)
+            best_long_span = Span(long_start_span, long_end_span)
+            short_span = Span(short_start_span, short_end_span)
+            # 对于长答案，我们从candidates里选择最接近的一组cand
+            min_dis = 99999
+            for c in example['candidates']:
+                # if c['top_level'] is False:
+                #     continue
 
-            start = long_span.start_token_idx
-            end = long_span.end_token_idx
+                start = long_span.start_token_idx
+                end = long_span.end_token_idx
 
-            index_dis = abs(start - c["start_token"]) + abs(end - c["end_token"])
-            if index_dis < min_dis:
-                min_dis = index_dis
-                best_long_span = Span(c["start_token"], c["end_token"])
-        long_span = best_long_span
+                index_dis = abs(start - c["start_token"]) + abs(end - c["end_token"])
+                if index_dis < min_dis:
+                    min_dis = index_dis
+                    best_long_span = Span(c["start_token"], c["end_token"])
+            long_span = best_long_span
+            long_spans.append(long_span)
+            long_scores.append(long_score)
+            short_spans.append(short_span)
+            short_scores.append(short_score)
     else:
-        summary.answer_type_logits = np.array([0] * 5)
-        long_score = 0
-        short_score = 0
+        answer_type_logits = np.array([0] * 5)
+        short_spans = [Span(-1, -1)]
+        long_spans = [Span(-1, -1)]
+        long_scores = [0]
+        short_scores = [0]
+        answer_type = 0
 
-    summary.answer_type_logits[0] *= th_long
-    summary.answer_type_logits[3] /= th_short
-    answer_type = int(np.argmax(summary.answer_type_logits))
     if answer_type == AnswerType.YES:
         yes_no_answer = "YES"
     elif answer_type == AnswerType.NO:
         yes_no_answer = "NO"
     else:
         yes_no_answer = "NONE"
-
     predicted_label = {
-        "long_answer": {
-            "start_token": int(long_span.start_token_idx) if answer_type != AnswerType.UNKNOWN else -1,
-            "end_token": int(long_span.end_token_idx) if answer_type != AnswerType.UNKNOWN else -1,
-            "start_byte": -1,
-            "end_byte": -1
-        },
-        "long_answer_score": float(long_score),
-        "short_answers": [{
-            "start_token": int(short_span.start_token_idx) if answer_type == AnswerType.SHORT else -1,
-            "end_token": int(short_span.end_token_idx) if answer_type == AnswerType.SHORT else -1,
-            "start_byte": -1,
-            "end_byte": -1
-        }],
-        "short_answers_score": float(short_score),
-        "yes_no_answer": yes_no_answer,
-        "answer_type_logits": summary.answer_type_logits.tolist(),
-        "answer_type": answer_type
+        'answer_type': answer_type,
+        'yes_no_answer': yes_no_answer,
+        'answer_type_logits': answer_type_logits.tolist(),
+        'short_answers_topk': [],
+        'long_answers_topk': []
     }
+
+    long_span_dict = {}
+    short_span_dict = {}
+    for short_span, long_span, short_score, long_score in zip(short_spans, long_spans, short_scores, long_scores):
+        if (short_span.start_token_idx, short_span.end_token_idx) not in short_span_dict:
+            short_span_dict[(short_span.start_token_idx, short_span.end_token_idx)] = short_score
+        elif short_score > short_span_dict[(short_span.start_token_idx, short_span.end_token_idx)]:
+            short_span_dict[(short_span.start_token_idx, short_span.end_token_idx)] = short_score
+
+        if (long_span.start_token_idx, long_span.end_token_idx) not in long_span_dict:
+            long_span_dict[(long_span.start_token_idx, long_span.end_token_idx)] = long_score
+        elif long_score > long_span_dict[(long_span.start_token_idx, long_span.end_token_idx)]:
+            long_span_dict[(long_span.start_token_idx, long_span.end_token_idx)] = long_score
+
+    # 这里由于集成，保留所有的token位置，到最后总和处理的时候再考虑是否置为-1
+    for (long_start, long_end) in long_span_dict:
+        predicted_label['long_answers_topk'].append({
+            "start_token": int(long_start),
+            "end_token": int(long_end),
+            "start_byte": -1,
+            "end_byte": -1,
+            "long_answer_score": float(long_span_dict[(long_start, long_end)])
+        })
+
+    for (short_start, short_end) in short_span_dict:
+        predicted_label['short_answers_topk'].append({
+            "start_token": int(short_start),
+            "end_token": int(short_end),
+            "start_byte": -1,
+            "end_byte": -1,
+            "short_answer_score": float(short_span_dict[(short_start, short_end)])
+        })
 
     return predicted_label
 
@@ -1353,7 +1386,7 @@ def compute_long_predictions(example, n_best_size, th):
     return pred_result
 
 
-def compute_short_predictions(example, n_best_size, max_answer_length, remain_topk):
+def compute_short_predictions(example_id, example, n_best_size, max_answer_length, remain_topk):
     predictions = []
     for feature, result in zip(example['features'], example['results']):
         # convert dict-style token_to_orig_map to list-style token_map,
@@ -1421,6 +1454,7 @@ def compute_short_predictions(example, n_best_size, max_answer_length, remain_to
     elif answer_type == 2:
         yes_no_answer = 'NO'
     pred_result = {
+        "example_id": example_id,
         'answer_type_logits': list(answer_type_logits.astype(float)),
         'answer_type': answer_type,
         'yes_no_answer': yes_no_answer,
@@ -1437,28 +1471,31 @@ def compute_short_predictions(example, n_best_size, max_answer_length, remain_to
 
 
 def convert_short_pred(nq_pred_dict):
-    for example_id in nq_pred_dict:
+    new_dict = {}
+    for example_id_ in nq_pred_dict:
+        pred = nq_pred_dict[example_id_]
         long_answer = {
             'start_token': -1,
             'end_token': -1,
             'start_byte': -1,
             'end_byte': -1
         }
-        long_answer_score = 0,
+        long_answer_score = 0
+        example_id = pred['example_id']
+        short_answers_score = pred['short_answers_topk'][0]['short_score']
+        yes_no_answer = pred['yes_no_answer']
+        answer_type = pred['answer_type']
+        answer_type_logits = pred['answer_type_logits']
 
         short_answers = [{
-            'start_token': nq_pred_dict[example_id]['short_answers_topk'][0]['short_start'],
-            'end_token': nq_pred_dict[example_id]['short_answers_topk'][0]['short_end'],
+            'start_token': pred['short_answers_topk'][0]['short_start'] if answer_type == 3 else -1,
+            'end_token': pred['short_answers_topk'][0]['short_end'] if answer_type == 3 else -1,
             'start_byte': -1,
             'end_byte': -1
         }]
-        short_answers_score = nq_pred_dict[example_id]['short_score']
-        yes_no_answer = nq_pred_dict[example_id]['yes_no_answer']
-        answer_type = nq_pred_dict[example_id]['answer_type']
-        answer_type_logits = nq_pred_dict[example_id]['answer_type_logits']
 
-        nq_pred_dict[example_id] = {
-            'example_id': example_id,
+        new_dict[example_id] = {
+            'example_id': int(example_id),
             'long_answer': long_answer,
             'long_answer_score': long_answer_score,
             'short_answers': short_answers,
@@ -1468,7 +1505,7 @@ def convert_short_pred(nq_pred_dict):
             'yes_no_answer': yes_no_answer
         }
 
-    return nq_pred_dict
+    return new_dict
 
 
 def compute_short_pred(dev_features, raw_results, n_best_size=10, max_answer_length=30, remain_topk=1):
@@ -1484,14 +1521,15 @@ def compute_short_pred(dev_features, raw_results, n_best_size=10, max_answer_len
 
     pred_dict = {}
     for example_id in tqdm(example_dict, desc="Computing predictions..."):
-        pred_exp_dict = compute_short_predictions(example_dict[example_id], n_best_size,
+        pred_exp_dict = compute_short_predictions(example_id, example_dict[example_id], n_best_size,
                                                   max_answer_length, remain_topk)
         pred_dict[example_id] = pred_exp_dict
 
     return pred_dict
 
 
-def compute_long_pred(ground_truth_dict, dev_features, raw_results, n_best_size=10, th=1.0, th2=1.0, do_ls=False):
+def compute_long_pred(ground_truth_dict, dev_features, raw_results, n_best_size=10, th=1.0, th2=1.0,
+                      do_ls=False, remain_topk=1):
     example_dict = {}
     for feature, result in zip(dev_features, raw_results):
         if feature.example_index not in example_dict:
@@ -1508,11 +1546,102 @@ def compute_long_pred(ground_truth_dict, dev_features, raw_results, n_best_size=
         if not do_ls:
             pred_exp_dict = compute_long_predictions(example_dict[example_id], n_best_size, th)
         else:
-            pred_exp_dict = compute_ls_topk_predictions(example_dict[example_id], th, th2)
+            pred_exp_dict = compute_ls_topk_predictions(example_dict[example_id], th, th2, remain_topk)
         pred_exp_dict['example_id'] = example_id
         pred_dict[example_id] = pred_exp_dict
 
     return pred_dict
+
+
+def ls_ensemble_combine(all_preds, th1=1.0, th2=1.0):
+    ensemble_pred_dict = {}
+    for pred_file in all_preds:
+        with open(pred_file) as f:
+            preds = json.load(f)
+            for example_id in preds:
+                pred = preds[example_id]
+                long_answers_topk = pred['long_answers_topk']
+                short_answers_topk = pred['short_answers_topk']
+                answer_type_logits = pred['answer_type_logits']
+                if example_id not in ensemble_pred_dict:
+                    ensemble_pred_dict[example_id] = {
+                        "long_answer_dict": {},
+                        "short_answer_dict": {},
+                        "answer_type_logits": np.array(answer_type_logits).astype(np.float64)
+                    }
+                else:
+                    ensemble_pred_dict[example_id]['answer_type_logits'] += np.array(answer_type_logits)
+
+                for long_answer in long_answers_topk:
+                    # 长答案span
+                    if (long_answer['start_token'], long_answer['end_token']) \
+                            in ensemble_pred_dict[example_id]['long_answer_dict']:
+                        ensemble_pred_dict[example_id]['long_answer_dict'][
+                            (long_answer['start_token'], long_answer['end_token'])] += long_answer['long_answer_score']
+                    else:
+                        ensemble_pred_dict[example_id]['long_answer_dict'][
+                            (long_answer['start_token'], long_answer['end_token'])] = long_answer['long_answer_score']
+
+                for short_answer in short_answers_topk:
+                    # 短答案span
+                    if (short_answer['start_token'], short_answer['end_token']) \
+                            in ensemble_pred_dict[example_id]['short_answer_dict']:
+                        ensemble_pred_dict[example_id]['short_answer_dict'][
+                            (short_answer['start_token'], short_answer['end_token'])] += short_answer[
+                            'short_answer_score']
+                    else:
+                        ensemble_pred_dict[example_id]['short_answer_dict'][
+                            (short_answer['start_token'], short_answer['end_token'])] = short_answer[
+                            'short_answer_score']
+
+    final_ls_preds = {}
+    for exp_id in ensemble_pred_dict:
+        long_answer_result = sorted(
+            [(sted, score) for sted, score in ensemble_pred_dict[exp_id]['long_answer_dict'].items()],
+            key=lambda x: x[1], reverse=True)[0]
+        short_answer_result = sorted(
+            [(sted, score) for sted, score in ensemble_pred_dict[exp_id]['short_answer_dict'].items()],
+            key=lambda x: x[1], reverse=True)[0]
+
+        answer_type_logits = ensemble_pred_dict[exp_id]['answer_type_logits']
+        answer_type_logits[0] *= th1
+        answer_type_logits[3] /= th2
+        answer_type = int(np.argmax(answer_type_logits))
+        if answer_type == AnswerType.YES:
+            yes_no_answer = "YES"
+        elif answer_type == AnswerType.NO:
+            yes_no_answer = "NO"
+        else:
+            yes_no_answer = "NONE"
+
+        long_start = int(long_answer_result[0][0]) if answer_type != AnswerType.UNKNOWN else -1
+        long_end = int(long_answer_result[0][1]) if answer_type != AnswerType.UNKNOWN else -1
+
+        short_start = int(short_answer_result[0][0]) if answer_type == AnswerType.SHORT else -1
+        short_end = int(short_answer_result[0][1]) if answer_type == AnswerType.SHORT else -1
+
+        final_ls_preds[exp_id] = {
+            "example_id": int(exp_id),
+            "long_answer": {
+                "start_token": long_start,
+                "end_token": long_end,
+                "start_byte": -1,
+                "end_byte": -1
+            },
+            "long_answer_score": float(long_answer_result[1]),
+            "short_answers": [{
+                "start_token": short_start,
+                "end_token": short_end,
+                "start_byte": -1,
+                "end_byte": -1
+            }],
+            "short_answers_score": float(short_answer_result[1]),
+            'yes_no_answer': yes_no_answer,
+            'answer_type': answer_type,
+            'answer_type_logits': answer_type_logits.tolist()
+        }
+
+    return final_ls_preds
 
 
 def short_ensemble_combine(all_preds, th, yesno_th=1.0, long_pred_file=None):

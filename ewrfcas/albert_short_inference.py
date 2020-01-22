@@ -99,33 +99,33 @@ def evaluate(model, args, dev_features, device, ei):
     print("***** Running evaluation Ensemble{}*****".format(ei))
     all_results = []
     ensemble_name = args.init_restore_dir[ei].split('/')[-2].split('-')[-1]
-    for batch in tqdm(eval_dataloader, desc="Evaluating{}".format(ei)):
-        model.eval()
-        batch = tuple(t.to(device) for t in batch)
-        with torch.no_grad():
-            input_ids, input_mask, segment_ids, example_indices = batch
-            inputs = {'input_ids': input_ids,
-                      'attention_mask': input_mask,
-                      'token_type_ids': segment_ids}
-            start_logits, end_logits, answer_type_logits = model(**inputs)
-
-        for i, example_index in enumerate(example_indices):
-            eval_feature = dev_features[example_index.item()]
-            unique_id = str(eval_feature.unique_id)
-
-            result = RawResult(unique_id=unique_id,
-                               short_start_logits=start_logits[i].cpu().numpy(),
-                               short_end_logits=end_logits[i].cpu().numpy(),
-                               answer_type_logits=answer_type_logits[i].cpu().numpy())
-            all_results.append(result)
-
     if args.is_test:
-        pickle.dump(all_results,
-                    open(os.path.join(args.output_dir, 'test_short_RawResults_{}.pkl'.format(ensemble_name)), 'wb'))
+        pkl_path = os.path.join(args.output_dir, 'test_long_RawResults_{}.pkl'.format(ensemble_name))
     else:
-        pickle.dump(all_results,
-                    open(os.path.join(args.output_dir, 'dev_short_RawResults_{}.pkl'.format(ensemble_name)), 'wb'))
-    # all_results = pickle.load(open(os.path.join(args.output_dir, 'dev_short_RawResults_{}.pkl'.format(ensemble_name)), 'rb'))
+        pkl_path = os.path.join(args.output_dir, 'dev_long_RawResults_{}.pkl'.format(ensemble_name))
+    if not os.path.exists(pkl_path):
+        for batch in tqdm(eval_dataloader, desc="Evaluating{}".format(ei)):
+            model.eval()
+            batch = tuple(t.to(device) for t in batch)
+            with torch.no_grad():
+                input_ids, input_mask, segment_ids, example_indices = batch
+                inputs = {'input_ids': input_ids,
+                          'attention_mask': input_mask,
+                          'token_type_ids': segment_ids}
+                start_logits, end_logits, answer_type_logits = model(**inputs)
+
+            for i, example_index in enumerate(example_indices):
+                eval_feature = dev_features[example_index.item()]
+                unique_id = str(eval_feature.unique_id)
+
+                result = RawResult(unique_id=unique_id,
+                                   short_start_logits=start_logits[i].cpu().numpy(),
+                                   short_end_logits=end_logits[i].cpu().numpy(),
+                                   answer_type_logits=answer_type_logits[i].cpu().numpy())
+                all_results.append(result)
+        pickle.dump(all_results, open(pkl_path, 'wb'))
+    else:
+        all_results = pickle.load(open(pkl_path, 'rb'))
 
     nq_pred_dict = compute_short_pred(dev_features, all_results, args.n_best_size,
                                       args.max_answer_length, args.remain_topk)
@@ -139,10 +139,11 @@ def evaluate(model, args, dev_features, device, ei):
 
 
 def get_ensemble_result(args):
+    ensemble_names = [init_restore_dir.split('/')[-2].split('-')[-1] for init_restore_dir in args.init_restore_dir]
     if args.is_test:
-        all_preds = glob(args.output_dir + '/test_short_predictions_*.json')
+        all_preds = [os.path.join(args.output_dir, 'test_short_predictions_' + e + '.json') for e in ensemble_names]
     else:
-        all_preds = glob(args.output_dir + '/dev_short_predictions_*.json')
+        all_preds = [os.path.join(args.output_dir, 'dev_short_predictions_' + e + '.json') for e in ensemble_names]
 
     output_prediction_file = None
 
@@ -195,10 +196,10 @@ def to_list(tensor):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument("--gpu_ids", default="6,7", type=str)
-    parser.add_argument("--eval_batch_size", default=64, type=int)
+    parser.add_argument("--gpu_ids", default="0,1,2,3,4,5,6,7", type=str)
+    parser.add_argument("--eval_batch_size", default=256, type=int)
     parser.add_argument("--n_best_size", default=20, type=int)
-    parser.add_argument("--remain_topk", default=1, type=int)
+    parser.add_argument("--remain_topk", default=2, type=int)
     parser.add_argument("--max_position", default=50, type=int)
     parser.add_argument("--max_seq_length", default=512, type=int,
                         help="The maximum total input sequence length after WordPiece tokenization. Sequences "
@@ -212,21 +213,22 @@ if __name__ == '__main__':
                         help="When splitting up a long document into chunks, how much stride to take between chunks.")
     parser.add_argument("--max_answer_length", default=30, type=int)
     parser.add_argument("--float16", default=True, type=bool)
-    parser.add_argument("--thresholds", default=[1.8, 1.9, 2.0, 2.1, 2.2, 2.3], type=list)
+    parser.add_argument("--thresholds", default=[1.7], type=list)
     parser.add_argument("--yesno_thresholds", default=[0], type=list, help='This th is added to the logits')
 
     parser.add_argument("--bert_config_file", default='albert_xxlarge/albert_config.json', type=str)
     parser.add_argument("--init_restore_dir", default=['check_points/albert-xxlarge-short-V00/best_checkpoint.pth',
-                                                       'check_points/albert-xxlarge-short-V03/best_checkpoint.pth',
-                                                       'check_points/albert-xxlarge-short-V10/best_checkpoint.pth'],
+                                                       # 'check_points/albert-xxlarge-short-V03/best_checkpoint.pth',
+                                                       'check_points/albert-xxlarge-short-V10/best_checkpoint.pth',
+                                                       'check_points/albert-xxlarge-short-V11/best_checkpoint.pth'],
                         type=list)
     parser.add_argument("--output_dir", default='check_points/albert-xxlarge-short-ensemble', type=str)
-    parser.add_argument("--predict_file", default='data/simplified-nq-dev.jsonl', type=str)
+    parser.add_argument("--predict_file", default='data/simplified-nq-test.jsonl', type=str)
     parser.add_argument("--long_pred_file",
                         # default='check_points/roberta-large-long-V00/test_long_predictions.json',
-                        default='check_points/roberta-large-tfidf-600-top8-V1/dev_long_predictions.json',
+                        default='check_points/roberta-large-ls-ensemble/all_test_ls_predictions.json',
                         type=str)
-    parser.add_argument("--is_test", default=False, type=bool)
+    parser.add_argument("--is_test", default=True, type=bool)
 
     args = parser.parse_args()
 
