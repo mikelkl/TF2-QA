@@ -109,11 +109,11 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument("--gpu_ids", default="0,1,2,3,4,5,6,7", type=str)
     parser.add_argument("--train_epochs", default=2, type=int)
-    parser.add_argument("--train_batch_size", default=32, type=int)
+    parser.add_argument("--train_batch_size", default=48, type=int)
     parser.add_argument("--eval_batch_size", default=64, type=int)
     parser.add_argument("--n_best_size", default=20, type=int)
     parser.add_argument("--max_answer_length", default=30, type=int)
-    parser.add_argument("--eval_steps", default=2925, type=int)
+    parser.add_argument("--eval_steps", default=0.25, type=int)
     parser.add_argument('--seed', type=int, default=556)
     parser.add_argument('--lr', type=float, default=3e-5)
     parser.add_argument('--dropout', type=float, default=0.1)
@@ -125,12 +125,14 @@ if __name__ == '__main__':
 
     parser.add_argument("--bert_config_file", default='roberta_large/config.json', type=str)
     parser.add_argument("--init_restore_dir", default='roberta_large/roberta_large_squad_extend.pth', type=str)
-    parser.add_argument("--output_dir", default='check_points/roberta-large-long-V00', type=str)
+    parser.add_argument("--output_dir", default='check_points/roberta-large-long-V01', type=str)
     parser.add_argument("--log_file", default='log.txt', type=str)
     parser.add_argument("--setting_file", default='setting.txt', type=str)
 
     parser.add_argument("--predict_file", default='data/simplified-nq-dev.jsonl', type=str)
-    parser.add_argument("--train_feat_dir", default='dataset/train_data_maxlen512_roberta_tfidf_features.bin',
+    # parser.add_argument("--train_feat_dir", default='dataset/train_data_maxlen512_roberta_tfidf_features.bin',
+    #                     type=str)
+    parser.add_argument("--train_feat_dir", default='dataset/train_data_maxlen512_includeunknowns0.138_roberta_tfidf_features.bin',
                         type=str)
     parser.add_argument("--dev_feat_dir", default='dataset/dev_data_maxlen512_roberta_tfidf_features.bin',
                         type=str)
@@ -168,8 +170,11 @@ if __name__ == '__main__':
         dev_steps_per_epoch += 1
     total_steps = steps_per_epoch * args.train_epochs
 
+    if args.eval_steps < 1:
+        args.eval_steps = int(args.eval_steps * steps_per_epoch)
     print('steps per epoch:', steps_per_epoch)
     print('total steps:', total_steps)
+    print('eval steps:', args.eval_steps)
     print('warmup steps:', int(args.warmup_rate * total_steps))
 
     bert_config = RobertaConfig.from_json_file(args.bert_config_file)
@@ -243,7 +248,7 @@ if __name__ == '__main__':
                         aw.write(str(json.dumps(results, indent=2)) + '\n')
 
                     if results['long-f1'] >= best_f1:
-                        best_f1 = results['long-f1:']
+                        best_f1 = results['long-f1']
                         print('Best f1:', best_f1)
                         model_to_save = model.module if hasattr(model, 'module') else model
                         torch.save(model_to_save.state_dict(),

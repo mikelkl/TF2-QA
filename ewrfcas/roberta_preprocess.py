@@ -658,7 +658,7 @@ if __name__ == '__main__':
                         help="Maximum context position for which to generate special tokens.")
     parser.add_argument("--example_neg_filter", type=float, default=0.2,
                         help="If positive, probability of including answers of type `UNKNOWN`.")
-    parser.add_argument("--include_unknowns", type=float, default=0.09,
+    parser.add_argument("--include_unknowns", type=float, default=0.138,
                         help="If positive, probability of including answers of type `UNKNOWN`.")
     parser.add_argument("--skip_nested_contexts", type=bool, default=True,
                         help="Completely ignore context that are not top level nodes in the page.")
@@ -669,7 +669,7 @@ if __name__ == '__main__':
     parser.add_argument("--tfidf_train_file", type=str, default='dataset/train_cand_selected_600.json')
     parser.add_argument("--tfidf_dev_file", type=str, default='dataset/dev_cand_selected_600.json')
     parser.add_argument("--tfidf_test_file", type=str, default='dataset/test_cand_selected_600.json')
-    parser.add_argument("--num_workers", default=8, type=int,
+    parser.add_argument("--num_workers", default=16, type=int,
                         help="Number of processes for parallel preprocessing")
 
     args = parser.parse_args()
@@ -687,7 +687,7 @@ if __name__ == '__main__':
     # example_output_file = os.path.join(args.output_dir,
     #                                    'tiny_train_data_maxlen{}_tfidf_examples.json'.format(args.max_seq_length))
     feature_output_file = os.path.join(args.output_dir,
-                                       'train_data_maxlen{}_roberta_tfidf_features.bin'.format(args.max_seq_length))
+                                       'train_data_maxlen{}_includeunknowns{}_roberta_tfidf_features.bin'.format(args.max_seq_length, args.include_unknowns))
     if args.do_ls:
         feature_output_file = feature_output_file.replace('_features', '_ls_features')
     if args.do_combine:

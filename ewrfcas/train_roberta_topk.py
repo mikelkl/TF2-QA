@@ -148,12 +148,14 @@ if __name__ == '__main__':
 
     parser.add_argument("--bert_config_file", default='roberta_large/config.json', type=str)
     parser.add_argument("--init_restore_dir", default='roberta_large/roberta_large_squad_extend.pth', type=str)
-    parser.add_argument("--output_dir", default='check_points/roberta-large-tfidf-600-top8-V0', type=str)
+    parser.add_argument("--output_dir", default='check_points/roberta-large-tfidf-600-top8-V1', type=str)
     parser.add_argument("--log_file", default='log.txt', type=str)
     parser.add_argument("--setting_file", default='setting.txt', type=str)
 
     parser.add_argument("--predict_file", default='data/simplified-nq-dev.jsonl', type=str)
-    parser.add_argument("--train_feat_dir", default='dataset/train_data_maxlen512_roberta_tfidf_ls_features.bin',
+    # parser.add_argument("--train_feat_dir", default='dataset/train_data_maxlen512_roberta_tfidf_ls_features.bin',
+    #                     type=str)
+    parser.add_argument("--train_feat_dir", default='dataset/train_data_maxlen512_includeunknowns0.138_roberta_tfidf_ls_features.bin',
                         type=str)
     parser.add_argument("--dev_feat_dir", default='dataset/dev_data_maxlen512_roberta_tfidf_ls_features.bin',
                         type=str)
