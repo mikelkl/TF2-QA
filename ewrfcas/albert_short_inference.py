@@ -9,9 +9,10 @@ import json
 import pandas as pd
 import albert_tokenization as tokenization
 import collections
+from glob import glob
 import pickle
 from nq_eval import get_metrics_as_dict
-from utils_nq import compute_short_pred, combine_long_short, read_candidates_from_one_split
+from utils_nq import compute_short_pred, combine_long_short, read_candidates_from_one_split, short_ensemble_combine
 from albert_short_preprocess import InputShortFeatures, read_nq_examples, convert_examples_to_features
 
 RawResult = collections.namedtuple("RawResult",
@@ -93,11 +94,12 @@ def make_submission(output_prediction_file, output_dir):
     sample_submission.to_csv(os.path.join(output_dir, "submission.csv"), index=False)
 
 
-def evaluate(model, args, dev_features, device):
+def evaluate(model, args, dev_features, device, ei):
     # Eval!
-    print("***** Running evaluation *****")
+    print("***** Running evaluation Ensemble{}*****".format(ei))
     all_results = []
-    for batch in tqdm(eval_dataloader, desc="Evaluating"):
+    ensemble_name = args.init_restore_dir[ei].split('/')[-2].split('-')[-1]
+    for batch in tqdm(eval_dataloader, desc="Evaluating{}".format(ei)):
         model.eval()
         batch = tuple(t.to(device) for t in batch)
         with torch.no_grad():
@@ -118,28 +120,48 @@ def evaluate(model, args, dev_features, device):
             all_results.append(result)
 
     if args.is_test:
-        pickle.dump(all_results, open(os.path.join(args.output_dir, 'test_short_RawResults.pkl'), 'wb'))
+        pickle.dump(all_results,
+                    open(os.path.join(args.output_dir, 'test_short_RawResults_{}.pkl'.format(ensemble_name)), 'wb'))
     else:
-        pickle.dump(all_results, open(os.path.join(args.output_dir, 'dev_short_RawResults.pkl'), 'wb'))
-    # all_results = pickle.load(open(os.path.join(args.output_dir, 'dev_short_RawResults.pkl'), 'rb'))
+        pickle.dump(all_results,
+                    open(os.path.join(args.output_dir, 'dev_short_RawResults_{}.pkl'.format(ensemble_name)), 'wb'))
+    # all_results = pickle.load(open(os.path.join(args.output_dir, 'dev_short_RawResults_{}.pkl'.format(ensemble_name)), 'rb'))
+
+    nq_pred_dict = compute_short_pred(dev_features, all_results, args.n_best_size,
+                                      args.max_answer_length, args.remain_topk)
+
+    if args.is_test:
+        output_prediction_file = os.path.join(args.output_dir, 'test_short_predictions_{}.json'.format(ensemble_name))
+    else:
+        output_prediction_file = os.path.join(args.output_dir, 'dev_short_predictions_{}.json'.format(ensemble_name))
+    with open(output_prediction_file, 'w') as f:
+        json.dump(nq_pred_dict, f)
+
+
+def get_ensemble_result(args):
+    if args.is_test:
+        all_preds = glob(args.output_dir + '/test_short_predictions_*.json')
+    else:
+        all_preds = glob(args.output_dir + '/dev_short_predictions_*.json')
 
     output_prediction_file = None
+
     for th in args.thresholds:
-        print('UNK type threshold:', th)
-        nq_pred_dict = compute_short_pred(dev_features, all_results,
-                                          args.n_best_size, args.max_answer_length, th)
-        long_short_combined_pred = combine_long_short(nq_pred_dict, args.long_pred_file)
+        for yesno_th in args.yesno_thresholds:
+            print('UNK type threshold:', th, 'YESNO threshold:', yesno_th)
+            ensemble_pred_dict = short_ensemble_combine(all_preds, th, yesno_th, args.long_pred_file)
+            long_short_combined_pred = combine_long_short(ensemble_pred_dict, args.long_pred_file)
 
-        if args.is_test:
-            output_prediction_file = os.path.join(args.output_dir, 'test_short_predictions.json')
-        else:
-            output_prediction_file = os.path.join(args.output_dir, 'dev_short_predictions.json')
-        with open(output_prediction_file, 'w') as f:
-            json.dump({'predictions': long_short_combined_pred}, f)
+            if args.is_test:
+                output_prediction_file = os.path.join(args.output_dir, 'all_test_short_predictions.json')
+            else:
+                output_prediction_file = os.path.join(args.output_dir, 'all_dev_short_predictions.json')
+            with open(output_prediction_file, 'w') as f:
+                json.dump({'predictions': long_short_combined_pred}, f)
 
-        if not args.is_test:
-            results = get_metrics_as_dict(args.predict_file, output_prediction_file)
-            print(json.dumps(results, indent=2))
+            if not args.is_test:
+                results = get_metrics_as_dict(args.predict_file, output_prediction_file)
+                print(json.dumps(results, indent=2))
 
     if args.is_test:
         make_submission(output_prediction_file, args.output_dir)
@@ -176,6 +198,7 @@ if __name__ == '__main__':
     parser.add_argument("--gpu_ids", default="6,7", type=str)
     parser.add_argument("--eval_batch_size", default=64, type=int)
     parser.add_argument("--n_best_size", default=20, type=int)
+    parser.add_argument("--remain_topk", default=1, type=int)
     parser.add_argument("--max_position", default=50, type=int)
     parser.add_argument("--max_seq_length", default=512, type=int,
                         help="The maximum total input sequence length after WordPiece tokenization. Sequences "
@@ -189,18 +212,21 @@ if __name__ == '__main__':
                         help="When splitting up a long document into chunks, how much stride to take between chunks.")
     parser.add_argument("--max_answer_length", default=30, type=int)
     parser.add_argument("--float16", default=True, type=bool)
-    parser.add_argument("--thresholds", default=[1.8], type=list)
+    parser.add_argument("--thresholds", default=[1.8, 1.9, 2.0, 2.1, 2.2, 2.3], type=list)
+    parser.add_argument("--yesno_thresholds", default=[0], type=list, help='This th is added to the logits')
 
     parser.add_argument("--bert_config_file", default='albert_xxlarge/albert_config.json', type=str)
-    parser.add_argument("--init_restore_dir", default='check_points/albert-xxlarge-short-V00/best_checkpoint.pth',
-                        type=str)
-    parser.add_argument("--output_dir", default='check_points/albert-xxlarge-short-V00', type=str)
-    parser.add_argument("--predict_file", default='data/simplified-nq-test.jsonl', type=str)
+    parser.add_argument("--init_restore_dir", default=['check_points/albert-xxlarge-short-V00/best_checkpoint.pth',
+                                                       'check_points/albert-xxlarge-short-V03/best_checkpoint.pth',
+                                                       'check_points/albert-xxlarge-short-V10/best_checkpoint.pth'],
+                        type=list)
+    parser.add_argument("--output_dir", default='check_points/albert-xxlarge-short-ensemble', type=str)
+    parser.add_argument("--predict_file", default='data/simplified-nq-dev.jsonl', type=str)
     parser.add_argument("--long_pred_file",
-                        default='check_points/roberta-large-long-V00/test_predictions.json',
-                        # default='check_points/albert-xxlarge-tfidf-600-top8-V0/test_predictions.json',
+                        # default='check_points/roberta-large-long-V00/test_long_predictions.json',
+                        default='check_points/roberta-large-tfidf-600-top8-V1/dev_long_predictions.json',
                         type=str)
-    parser.add_argument("--is_test", default=True, type=bool)
+    parser.add_argument("--is_test", default=False, type=bool)
 
     args = parser.parse_args()
 
@@ -247,14 +273,17 @@ if __name__ == '__main__':
     dev_dataset = TensorDataset(all_input_ids, all_input_mask, all_segment_ids, all_example_index)
     eval_dataloader = DataLoader(dev_dataset, shuffle=False, batch_size=args.eval_batch_size)
 
-    bert_config = AlbertConfig.from_json_file(args.bert_config_file)
-    model = AlBertJointForShort(bert_config)
-    utils.torch_show_all_params(model)
-    utils.torch_init_model(model, args.init_restore_dir)
-    if args.float16:
-        model.half()
-    model.to(device)
-    if n_gpu > 1:
-        model = torch.nn.DataParallel(model)
+    for i, init_restore_dir in enumerate(args.init_restore_dir):
+        bert_config = AlbertConfig.from_json_file(args.bert_config_file)
+        model = AlBertJointForShort(bert_config)
+        utils.torch_show_all_params(model)
+        utils.torch_init_model(model, init_restore_dir)
+        if args.float16:
+            model.half()
+        model.to(device)
+        if n_gpu > 1:
+            model = torch.nn.DataParallel(model)
 
-    evaluate(model, args, dev_features, device)
+        evaluate(model, args, dev_features, device, i)
+
+    get_ensemble_result(args)

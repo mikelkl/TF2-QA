@@ -526,7 +526,7 @@ class AlBertJointForNQ2(nn.Module):
     def forward(self, input_ids, attention_mask=None, token_type_ids=None,
                 long_start_positions=None, long_end_positions=None,
                 short_start_positions=None, short_end_positions=None,
-                answer_types=None):
+                answer_types=None, is_distill=False):
 
         outputs = self.bert(input_ids,
                             attention_mask=attention_mask,
@@ -607,7 +607,7 @@ class AlBertJointForNQ2(nn.Module):
 
             return total_loss
 
-        else:  # test process
+        elif not is_distill:  # test process
             # [bs, topk]
             long_start_topk_logits, long_start_topk_index = torch.topk(long_start_logits_masked,
                                                                        k=self.long_n_top, dim=1)

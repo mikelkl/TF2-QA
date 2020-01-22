@@ -71,6 +71,8 @@ def split_data(input_dir, output_dir, token_limit=600, is_training=False):
         json.dump(para_splited_data, w, indent=2)
 
 
+para_splited_data = []
+
 split_data('data/simplified-nq-test.jsonl', 'dataset/test_splited_600.json', token_limit=600, is_training=False)
 
 # STEP2 将分段后的语料选出top8
@@ -84,7 +86,7 @@ from sklearn.feature_extraction.text import TfidfTransformer, CountVectorizer
 # top10: 98%
 topk = 8
 
-with open('data/simplified-nq-test.jsonl', 'r') as f:
+with open('dataset/test_splited_600.json', 'r') as f:
     para_splited_data = json.load(f)
 
 # 停用词
@@ -144,12 +146,15 @@ with tqdm(total=len(para_splited_data), desc='Building, Top{}'.format(topk)) as 
 with open("dataset/test_cand_selected_600.json", 'w') as w:
     json.dump(tfidf_cand_select, w, indent=2)
 
-# STEP3 roberta_large preprocess
+tfidf_cand_select = {}
+para_splited_data = []
+
+# STEP3 roberta_large LS preprocess
 import argparse
 import os
 import torch
-from roberta_long_preprocess import read_nq_examples as real_roberta_examples
-from roberta_long_preprocess import convert_examples_to_features as convert_roberta_features
+from roberta_preprocess import read_nq_examples as real_roberta_examples
+from roberta_preprocess import convert_examples_to_features as convert_roberta_features
 from transformers import tokenization_roberta
 
 parser = argparse.ArgumentParser()
@@ -169,10 +174,12 @@ parser.add_argument("--max_position", type=int, default=50,
                     help="Maximum context position for which to generate special tokens.")
 parser.add_argument("--example_neg_filter", type=float, default=0.2,
                     help="If positive, probability of including answers of type `UNKNOWN`.")
-parser.add_argument("--include_unknowns", type=float, default=0.09,
+parser.add_argument("--include_unknowns", type=float, default=0.138,
                     help="If positive, probability of including answers of type `UNKNOWN`.")
 parser.add_argument("--skip_nested_contexts", type=bool, default=True,
                     help="Completely ignore context that are not top level nodes in the page.")
+parser.add_argument("--do_ls", type=bool, default=True,
+                    help="Long short answers.")
 parser.add_argument("--tfidf_test_file", type=str, default='dataset/test_cand_selected_600.json')
 
 args = parser.parse_args()
@@ -182,7 +189,7 @@ tokenizer = tokenization_roberta.RobertaTokenizer(vocab_file='roberta_large/voca
 example_output_file = os.path.join(args.output_dir,
                                    'test_data_maxlen{}_tfidf_examples.json'.format(args.max_seq_length))
 feature_output_file = os.path.join(args.output_dir,
-                                   'test_data_maxlen{}_roberta_tfidf_features.bin'.format(args.max_seq_length))
+                                   'test_data_maxlen{}_roberta_tfidf_ls_features.bin'.format(args.max_seq_length))
 if not os.path.exists(feature_output_file):
     tfidf_dict = json.load(open(args.tfidf_test_file))
     if os.path.exists(example_output_file):
@@ -194,27 +201,32 @@ if not os.path.exists(feature_output_file):
     features = convert_roberta_features(examples=examples, tokenizer=tokenizer, is_training=False, args=args)
     torch.save(features, feature_output_file)
 
+examples = []
+features = []
+
 # STEP 4 预测长答案
-from roberta_modeling import RobertaJointForLong
+from roberta_modeling import RobertaJointForNQ2
 from transformers.modeling_roberta import RobertaConfig, RobertaModel
 from torch.utils.data import TensorDataset, DataLoader
 import utils
-from roberta_long_inference import load_cached_data as load_roberta_data
-from roberta_long_inference import evaluate as roberta_evaluate
+from roberta_ls_inference import load_cached_data as load_roberta_data
+from roberta_ls_inference import evaluate as roberta_evaluate
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--gpu_ids", default="0", type=str)
-parser.add_argument("--eval_batch_size", default=64, type=int)
+parser.add_argument("--eval_batch_size", default=16, type=int)
 parser.add_argument("--n_best_size", default=20, type=int)
 parser.add_argument("--max_answer_length", default=30, type=int)
 parser.add_argument("--float16", default=False, type=bool)
-parser.add_argument("--thresholds", default=[1.3], type=list)
+parser.add_argument("--thresholds1", default=[1.5], type=list)
+parser.add_argument("--thresholds2", default=[1.0], type=list)
 
 parser.add_argument("--bert_config_file", default='roberta_large/config.json', type=str)
-parser.add_argument("--init_restore_dir", default='check_points/roberta-large-long-V00/best_checkpoint.pth', type=str)
-parser.add_argument("--output_dir", default='check_points/roberta-large-long-V00', type=str)
+parser.add_argument("--init_restore_dir", default='check_points/roberta-large-tfidf-600-top8-V1/best_checkpoint.pth',
+                    type=str)
+parser.add_argument("--output_dir", default='check_points/roberta-large-tfidf-600-top8-V1', type=str)
 parser.add_argument("--predict_file", default='data/simplified-nq-test.jsonl', type=str)
-parser.add_argument("--dev_feat_dir", default='dataset/test_data_maxlen512_roberta_tfidf_features.bin', type=str)
+parser.add_argument("--dev_feat_dir", default='dataset/test_data_maxlen512_roberta_tfidf_ls_features.bin', type=str)
 parser.add_argument("--is_test", default=True, type=bool)
 
 args = parser.parse_args()
@@ -235,7 +247,7 @@ if len(dev_dataset) % args.eval_batch_size != 0:
     dev_steps_per_epoch += 1
 
 bert_config = RobertaConfig.from_json_file(args.bert_config_file)
-model = RobertaJointForLong(RobertaModel(bert_config), bert_config)
+model = RobertaJointForNQ2(RobertaModel(bert_config), bert_config)
 utils.torch_show_all_params(model)
 utils.torch_init_model(model, args.init_restore_dir)
 if args.float16:
@@ -248,16 +260,16 @@ roberta_evaluate(model, args, dev_features, device)
 
 # STEP 5 预测短答案，并合并
 from albert_modeling import AlBertJointForShort, AlbertConfig
-from albert_short_preprocess import InputShortFeatures
 from albert_short_preprocess import read_nq_examples as read_albert_examples
 from albert_short_preprocess import convert_examples_to_features as convert_albert_features
 from utils_nq import read_candidates_from_one_split
 from albert_short_inference import evaluate as albert_evaluate
+from albert_short_inference import get_ensemble_result
 import albert_tokenization
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--gpu_ids", default="0", type=str)
-parser.add_argument("--eval_batch_size", default=64, type=int)
+parser.add_argument("--eval_batch_size", default=16, type=int)
 parser.add_argument("--n_best_size", default=20, type=int)
 parser.add_argument("--max_position", default=50, type=int)
 parser.add_argument("--max_seq_length", default=512, type=int,
@@ -272,15 +284,17 @@ parser.add_argument("--doc_stride", default=128, type=int,
                     help="When splitting up a long document into chunks, how much stride to take between chunks.")
 parser.add_argument("--max_answer_length", default=30, type=int)
 parser.add_argument("--float16", default=True, type=bool)
-parser.add_argument("--thresholds", default=[1.8], type=list)
+parser.add_argument("--thresholds", default=[2.0], type=list)
+parser.add_argument("--yesno_thresholds", default=[0], type=list, help='This th is added to the logits')
 
 parser.add_argument("--bert_config_file", default='albert_xxlarge/albert_config.json', type=str)
-parser.add_argument("--init_restore_dir", default='check_points/albert-xxlarge-short-V00/best_checkpoint.pth',
-                    type=str)
-parser.add_argument("--output_dir", default='check_points/albert-xxlarge-short-V00', type=str)
+parser.add_argument("--init_restore_dir", default=['check_points/albert-xxlarge-short-V00/best_checkpoint.pth',
+                                                   'check_points/albert-xxlarge-short-V03/best_checkpoint.pth'],
+                    type=list)
+parser.add_argument("--output_dir", default='check_points/albert-xxlarge-short-ensemble', type=str)
 parser.add_argument("--predict_file", default='data/simplified-nq-test.jsonl', type=str)
 parser.add_argument("--long_pred_file",
-                    default='check_points/roberta-large-long-V00/test_long_predictions.json',
+                    default='check_points/roberta-large-tfidf-600-top8-V1/test_long_predictions.json',
                     type=str)
 parser.add_argument("--is_test", default=True, type=bool)
 
@@ -329,14 +343,17 @@ all_example_index = torch.arange(all_input_ids.size(0), dtype=torch.long)
 dev_dataset = TensorDataset(all_input_ids, all_input_mask, all_segment_ids, all_example_index)
 eval_dataloader = DataLoader(dev_dataset, shuffle=False, batch_size=args.eval_batch_size)
 
-bert_config = AlbertConfig.from_json_file(args.bert_config_file)
-model = AlBertJointForShort(bert_config)
-utils.torch_show_all_params(model)
-utils.torch_init_model(model, args.init_restore_dir)
-if args.float16:
-    model.half()
-model.to(device)
-if n_gpu > 1:
-    model = torch.nn.DataParallel(model)
+for i, init_restore_dir in enumerate(args.init_restore_dir):
+    bert_config = AlbertConfig.from_json_file(args.bert_config_file)
+    model = AlBertJointForShort(bert_config)
+    utils.torch_show_all_params(model)
+    utils.torch_init_model(model, init_restore_dir)
+    if args.float16:
+        model.half()
+    model.to(device)
+    if n_gpu > 1:
+        model = torch.nn.DataParallel(model)
 
-albert_evaluate(model, args, dev_features, device)
+    albert_evaluate(model, args, dev_features, device, i)
+
+get_ensemble_result(args)

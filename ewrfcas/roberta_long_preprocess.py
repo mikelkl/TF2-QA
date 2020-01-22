@@ -547,9 +547,7 @@ if __name__ == '__main__':
                         help="If positive, probability of including answers of type `UNKNOWN`.")
     parser.add_argument("--skip_nested_contexts", type=bool, default=True,
                         help="Completely ignore context that are not top level nodes in the page.")
-    parser.add_argument("--do_ls", type=bool, default=True,
-                        help="Whether to use long short index labels?")
-    parser.add_argument("--do_combine", type=bool, default=True,
+    parser.add_argument("--do_combine", type=bool, default=False,
                         help="Whether to combine all remained examples from each line?")
     parser.add_argument("--tfidf_train_file", type=str, default='dataset/train_cand_selected_600.json')
     parser.add_argument("--tfidf_dev_file", type=str, default='dataset/dev_cand_selected_600.json')

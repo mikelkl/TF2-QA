@@ -118,7 +118,7 @@ if __name__ == '__main__':
     parser.add_argument("--n_best_size", default=20, type=int)
     parser.add_argument("--max_answer_length", default=30, type=int)
     parser.add_argument("--float16", default=True, type=bool)
-    parser.add_argument("--thresholds", default=[1.3], type=list)
+    parser.add_argument("--thresholds", default=[1.5], type=list)
 
     parser.add_argument("--bert_config_file", default='roberta_large/config.json', type=str)
     parser.add_argument("--init_restore_dir", default='check_points/roberta-large-long-V00/best_checkpoint.pth',

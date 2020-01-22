@@ -437,13 +437,13 @@ def get_metrics_with_answer_stats(long_answer_stats, short_answer_stats):
     return metrics
 
 
-def pred_hit_one(pred, gt_annotations):
+def pred_hit_one(pred, pred_span, gt_annotations):
     for gt_ in gt_annotations:
         if gt_['yes_no_answer'] != 'NONE' and gt_['yes_no_answer'] == pred['yes_no_answer']:
             return True
         elif gt_['yes_no_answer'] == pred['yes_no_answer'] and len(gt_['spans']) > 0:
             for span in gt_['spans']:
-                if span['start_token'] == pred['short_start'] and span['end_token'] == pred['short_end']:
+                if span['start_token'] == pred_span['short_start'] and span['end_token'] == pred_span['short_end']:
                     return True
     return False
 
@@ -464,7 +464,7 @@ def get_metrics_short(ground_truth_dict, nq_pred_dict):
             if pred['answer_type'] == 0:
                 fn += 1
             else:
-                if pred_hit_one(pred, gt_annotations):
+                if pred_hit_one(pred, pred['short_answers_topk'][0], gt_annotations):
                     tp += 1
                 else:
                     fp += 1

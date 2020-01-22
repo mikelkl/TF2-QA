@@ -232,13 +232,12 @@ def read_prediction_json(predictions_path):
             if yes_no_answer != 'none' and not is_null_span_list(short_span_list):
                 raise ValueError('yes/no prediction and short answers cannot coexist.')
 
-        pred_item = NQLabel(
-            example_id=single_prediction['example_id'],
-            long_answer_span=long_span,
-            short_answer_span_list=short_span_list,
-            yes_no_answer=yes_no_answer,
-            long_score=single_prediction['long_answer_score'],
-            short_score=single_prediction['short_answers_score'])
+        pred_item = NQLabel(example_id=single_prediction['example_id'],
+                            long_answer_span=long_span,
+                            short_answer_span_list=short_span_list,
+                            yes_no_answer=yes_no_answer,
+                            long_score=single_prediction['long_answer_score'],
+                            short_score=single_prediction['short_answers_score'])
 
         nq_pred_dict[single_prediction['example_id']] = pred_item
 

@@ -592,6 +592,7 @@ def convert_single_ls_example(example, tokenizer, is_training, args):
         sub_tokens = albert_tokenize(tokenizer, token)
         tok_to_orig_index.extend([i] * len(sub_tokens))
         all_doc_tokens.extend(sub_tokens)
+    orig_to_tok_index.append(len(all_doc_tokens))
 
     # 特别注意！由于在paragraph_tokens中我们的token已经映射过一次了
     # 这里wordpiece等于又映射了一遍，所以这里的操作是二次映射
@@ -614,16 +615,10 @@ def convert_single_ls_example(example, tokenizer, is_training, args):
     if is_training:
         if example['answer_type'] != AnswerType['UNKNOWN']:
             tok_long_start_position = orig_to_tok_index[example['long_start']]
-            if example['long_end'] == len(orig_to_tok_index):
-                tok_long_end_position = orig_to_tok_index[-1]
-            else:
-                tok_long_end_position = orig_to_tok_index[example['long_end']] - 1
+            tok_long_end_position = orig_to_tok_index[example['long_end']] - 1
         if example['answer_type'] == AnswerType['SHORT']:
             tok_short_start_position = orig_to_tok_index[example['short_start']]
-            if example['short_end'] == len(orig_to_tok_index):
-                tok_short_end_position = orig_to_tok_index[-1]
-            else:
-                tok_short_end_position = orig_to_tok_index[example['short_end']] - 1
+            tok_short_end_position = orig_to_tok_index[example['short_end']] - 1
 
     # Get max tokens number for original doc,
     # should minus query tokens number and 3 special tokens
