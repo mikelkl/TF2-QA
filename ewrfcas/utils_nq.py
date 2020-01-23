@@ -1536,7 +1536,10 @@ def compute_long_pred(ground_truth_dict, dev_features, raw_results, n_best_size=
             example_dict[feature.example_index] = {}
             example_dict[feature.example_index]['results'] = [result]
             example_dict[feature.example_index]['features'] = [feature]
-            example_dict[feature.example_index]['candidates'] = ground_truth_dict[feature.example_index]['candidates']
+            if "candidates" in ground_truth_dict[feature.example_index]:
+                example_dict[feature.example_index]['candidates'] = ground_truth_dict[feature.example_index]['candidates']
+            else:
+                example_dict[feature.example_index]['candidates'] = ground_truth_dict[feature.example_index]
         else:
             example_dict[feature.example_index]['results'].append(result)
             example_dict[feature.example_index]['features'].append(feature)

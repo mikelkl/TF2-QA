@@ -420,7 +420,7 @@ def find_best_thresh(gold_path, prediction_path):
 
     return metrics
 
-def get_metrics_as_dict(gold_path, prediction_path):
+def get_metrics_as_dict(gold_path, prediction_path, long_thresh=-float("inf"), short_thresh=-float("inf")):
     """Library version of the end-to-end evaluation.
 
     Arguments:
@@ -437,7 +437,7 @@ def get_metrics_as_dict(gold_path, prediction_path):
     long_answer_stats, short_answer_stats = score_answers(
         nq_gold_dict, nq_pred_dict)
 
-    return get_metrics_with_answer_stats(long_answer_stats, short_answer_stats)
+    return get_metrics_with_answer_stats(long_answer_stats, short_answer_stats, long_thresh, short_thresh)
 
 def get_metrics_with_answer_stats(long_answer_stats, short_answer_stats, long_thresh=-float("inf"), short_thresh=-float("inf")):
     """
@@ -514,7 +514,8 @@ if __name__ == "__main__":
     from pprint import pprint
 
     predict_file = "../input/tensorflow2-question-answering/simplified-nq-dev.jsonl"
-    output_prediction_file = "../output/models/albert-xxlarge-tfidf-600-top8-V0/predictions20000.json"
+    output_prediction_file = "../output/models/albert-xxlarge-V0-ensemble/predictions_ensemble.json"
+    print("Tuning for:", output_prediction_file)
     print('*' * 20)
     print('Metrics before threshold:')
     metrics = get_metrics_as_dict(predict_file, output_prediction_file)
@@ -524,3 +525,8 @@ if __name__ == "__main__":
     print('Metrics after threshold:')
     metrics_thresh = find_best_thresh(predict_file, output_prediction_file)
     pprint(metrics_thresh)
+
+    print('*' * 20)
+    print('Metrics with best long/short threshold:')
+    metrics = get_metrics_as_dict(predict_file, output_prediction_file, metrics_thresh['long-best_thresh'], metrics_thresh["short-best_thresh"])
+    pprint(metrics)
