@@ -3,6 +3,8 @@
 Big thanks to my awesome teammates [@ewrfcas](https://github.com/ewrfcas) and [@leolemon214](https://github.com/leolemon214). In this repository you will find the code for the [21th place solution, puzzlingly shaking from public LB 3th](https://www.kaggle.com/c/tensorflow2-question-answering/discussion/128140). Our team finished as 3/1233 with a micro F1-score of 0.71 on the public test set and 21/1233 with a micro F1-score of 0.67 on the private test set. The challenge was to predict short and long answer responses to real questions about Wikipedia articles. 
 
 # Get Data
+The dataset is provided by [Google's Natural Questions](https://ai.google.com/research/NaturalQuestions/dataset), but contains its own unique private test set.
+
 ```shell script
 # Get train set and public test set
 sudo pip install --upgrade kaggle
